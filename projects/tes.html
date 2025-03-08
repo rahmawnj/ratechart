@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Animasi Halo Neon</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!-- Sertakan p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script>
+    let particles = [];
+    const numParticles = 100;
+    let center;
+    let globalAngle = 0;
+    
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      center = createVector(width / 2, height / 2);
+      // Buat partikel dengan posisi acak dalam rentang radius tertentu
+      for (let i = 0; i < numParticles; i++) {
+        let angle = random(TWO_PI);
+        let radius = random(100, min(width, height) / 2);
+        let speed = random(0.001, 0.005);
+        particles.push({ angle, radius, speed });
+      }
+    }
+    
+    function draw() {
+      background(0);
+      globalAngle += 0.001;
+      let positions = [];
+      
+      // Set properti neon untuk garis dan partikel
+      strokeWeight(2);
+      drawingContext.shadowBlur = 20;
+      drawingContext.shadowColor = '#0ff'; // Warna neon cyan
+      stroke('#0ff');
+      noFill();
+      
+      // Hitung posisi masing-masing partikel dan gambarkan lingkaran kecil
+      for (let p of particles) {
+        // Osilasi kecil agar gerak partikel terasa dinamis
+        let oscillation = sin(frameCount * p.speed * 100 + p.angle) * 20;
+        let r = p.radius + oscillation;
+        let x = center.x + r * cos(p.angle + globalAngle);
+        let y = center.y + r * sin(p.angle + globalAngle);
+        positions.push(createVector(x, y));
+        ellipse(x, y, 8, 8);
+      }
+      
+      // Gambarkan garis yang menghubungkan partikel jika jaraknya dekat
+      for (let i = 0; i < positions.length; i++) {
+        for (let j = i + 1; j < positions.length; j++) {
+          let d = dist(positions[i].x, positions[i].y, positions[j].x, positions[j].y);
+          if (d < 100) {
+            // Transparansi garis berdasarkan jarak
+            let alpha = map(d, 0, 100, 255, 0);
+            stroke(0, 255, 255, alpha);
+            line(positions[i].x, positions[i].y, positions[j].x, positions[j].y);
+          }
+        }
+      }
+    }
+    
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      center = createVector(width / 2, height / 2);
+    }
+  </script>
+</body>
+</html>

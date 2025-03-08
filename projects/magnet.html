@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Interactive Magnetic Balls - Matter.js</title>
+  <style>
+    body {
+      margin: 0;
+      background: #2c3e50;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: #27ae60;
+    }
+    #modeIndicator {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 20px;
+      z-index: 100;
+    }
+    #soundToggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      font-family: sans-serif;
+      font-size: 16px;
+      padding: 5px 10px;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div id="modeIndicator">Mode: Attract</div>
+  <button id="soundToggle">Enable Sound</button>
+  
+  <!-- Sertakan Matter.js dan Tone.js dari CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  
+  <script>
+    // Alias modul Matter.js
+    const Engine = Matter.Engine,
+          Render = Matter.Render,
+          Runner = Matter.Runner,
+          World = Matter.World,
+          Bodies = Matter.Bodies,
+          Body = Matter.Body,
+          Events = Matter.Events,
+          Vector = Matter.Vector;
+
+    // Buat engine dan world
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0; // Tidak ada gravitasi agar bola bergerak rata
+
+    // Ukuran canvas
+    const canvasWidth = 800;
+    const canvasHeight = 600;
+    const render = Render.create({
+      element: document.body,
+      engine: engine,
+      options: {
+        width: canvasWidth,
+        height: canvasHeight,
+        wireframes: false,
+        background: '#27ae60'
+      }
+    });
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    // Buat dinding solid di sekeliling (tidak ada lubang) dan beri label "wall"
+    const wallThickness = 50;
+    const walls = [
+      Bodies.rectangle(canvasWidth/2, -wallThickness/2, canvasWidth, wallThickness, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(canvasWidth/2, canvasHeight+wallThickness/2, canvasWidth, wallThickness, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(-wallThickness/2, canvasHeight/2, wallThickness, canvasHeight, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(canvasWidth+wallThickness/2, canvasHeight/2, wallThickness, canvasHeight, { isStatic: true, label: 'wall' })
+    ];
+    World.add(world, walls);
+
+    // Buat banyak bola dengan warna acak dan tambahkan frictionAir untuk mengurangi gerakan,
+    // beri label "ball" untuk membedakan dengan dinding.
+    const balls = [];
+    for (let i = 0; i < 30; i++) {
+      let ball = Bodies.circle(
+        Math.random() * (canvasWidth - 100) + 50,
+        Math.random() * (canvasHeight - 100) + 50,
+        Math.random() * 10 + 10,  // radius antara 10 dan 20
+        {
+          restitution: 0.9,
+          friction: 0.005,
+          frictionAir: 0.05,
+          label: 'ball',
+          render: { fillStyle: '#' + Math.floor(Math.random()*16777215).toString(16) }
+        }
+      );
+      balls.push(ball);
+      World.add(world, ball);
+    }
+
+    // Attractor: posisi magnet yang mengikuti mouse
+    let attractor = { x: canvasWidth/2, y: canvasHeight/2 };
+
+    // Perbarui posisi attractor berdasarkan pergerakan mouse
+    window.addEventListener('mousemove', function(evt) {
+      const rect = render.canvas.getBoundingClientRect();
+      attractor.x = evt.clientX - rect.left;
+      attractor.y = evt.clientY - rect.top;
+    });
+
+    // Mode interaksi: attract (tarik) atau repulse (tolak)
+    let attractMode = true;
+    const modeIndicator = document.getElementById('modeIndicator');
+    modeIndicator.innerText = "Mode: Attract";
+
+    // Toggle mode dengan tombol spasi
+    window.addEventListener('keydown', function(evt) {
+      if(evt.code === 'Space') {
+        attractMode = !attractMode;
+        modeIndicator.innerText = attractMode ? "Mode: Attract" : "Mode: Repulse";
+      }
+    });
+
+    // Variabel untuk mengatur apakah sound diaktifkan
+    let soundEnabled = false;
+    const soundToggle = document.getElementById('soundToggle');
+    soundToggle.addEventListener('click', () => {
+      soundEnabled = !soundEnabled;
+      soundToggle.innerText = soundEnabled ? "Disable Sound" : "Enable Sound";
+      // Mulai Tone.js Audio Context bila sound diaktifkan (memerlukan interaksi pengguna)
+      if (soundEnabled) {
+        Tone.start();
+      }
+    });
+
+    // Buat synth Tone.js untuk sound effect
+    const synth = new Tone.Synth().toDestination();
+
+    // Setiap update, terapkan gaya ke tiap bola menuju (atau menjauh dari) attractor
+    Events.on(engine, 'beforeUpdate', function() {
+      for (let ball of balls) {
+        let dir = Vector.sub(attractor, ball.position);
+        let distance = Vector.magnitude(dir);
+        if(distance > 1) {
+          let norm = Vector.normalise(dir);
+          // Gaya proporsional terhadap jarak (nilai dikurangi agar gerak tidak terlalu banyak)
+          let magnitude = 0.00002 * distance;
+          if(!attractMode) magnitude *= -1;
+          let force = Vector.mult(norm, magnitude);
+          Body.applyForce(ball, ball.position, force);
+        }
+      }
+    });
+
+    // Tangani tabrakan antara bola dan dinding, mainkan sound effect bila soundEnabled
+    Events.on(engine, 'collisionStart', function(event) {
+      event.pairs.forEach(pair => {
+        const labels = [pair.bodyA.label, pair.bodyB.label];
+        if (soundEnabled && labels.includes('wall') && labels.includes('ball')) {
+          // Mainkan sound effect dengan nada C4 selama 8n
+          synth.triggerAttackRelease("C4", "8n");
+        }
+      });
+    });
+
+    // Render kustom: gambar garis antar bola jika dekat (efek jaringan) dan gambarkan attractor
+    Events.on(render, 'afterRender', function() {
+      const context = render.context;
+      // Gambar garis antar bola jika jarak kurang dari 100
+      context.beginPath();
+      for(let i = 0; i < balls.length; i++) {
+        for(let j = i+1; j < balls.length; j++) {
+          let d = Vector.magnitude(Vector.sub(balls[i].position, balls[j].position));
+          if(d < 100) {
+            context.moveTo(balls[i].position.x, balls[i].position.y);
+            context.lineTo(balls[j].position.x, balls[j].position.y);
+          }
+        }
+      }
+      context.strokeStyle = 'rgba(255,255,255,0.2)';
+      context.lineWidth = 1;
+      context.stroke();
+
+      // Gambar attractor sebagai lingkaran indikator
+      context.beginPath();
+      context.arc(attractor.x, attractor.y, 10, 0, 2 * Math.PI);
+      context.fillStyle = attractMode ? 'rgba(0,255,0,0.7)' : 'rgba(255,0,0,0.7)';
+      context.fill();
+    });
+  </script>
+</body>
+</html>

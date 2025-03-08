@@ -53,27 +53,15 @@
     const canvasElement = document.getElementById('output');
     const canvasCtx = canvasElement.getContext('2d');
 
-    async function setupCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }
-      });
-      videoElement.srcObject = stream;
-      return new Promise(resolve => {
-        videoElement.onloadedmetadata = () => {
-          resolve(videoElement);
-        };
-      });
-    }
-
+    // Fungsi untuk menyamakan ukuran canvas dengan video
     function adjustCanvasSize() {
-      // Sesuaikan canvas dengan ukuran video yang tampil
       canvasElement.width = videoElement.videoWidth;
       canvasElement.height = videoElement.videoHeight;
     }
-
     videoElement.addEventListener('loadedmetadata', adjustCanvasSize);
     window.addEventListener('resize', adjustCanvasSize);
 
+    // Inisialisasi Holistic dari MediaPipe
     const holistic = new Holistic({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
@@ -87,29 +75,25 @@
     });
 
     holistic.onResults((results) => {
-      // Bersihkan canvas overlay setiap frame
+      // Bersihkan canvas setiap frame
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
       // Gambar topeng solid untuk wajah
       if (results.faceLandmarks) {
-        // Indeks yang membentuk kontur wajah (face oval)
         const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
         canvasCtx.beginPath();
-        // Mulai dengan titik pertama (skalakan dengan ukuran canvas)
         let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
         canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
-        // Lanjutkan dengan titik-titik berikutnya
         for (let i = 1; i < faceOvalIndices.length; i++) {
           let point = results.faceLandmarks[faceOvalIndices[i]];
           canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
         }
         canvasCtx.closePath();
-        // Atur warna fill (misalnya hitam semi-transparan)
         canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
         canvasCtx.fill();
       }
 
-      // Gambar konektor untuk pose dan tangan jika diperlukan
+      // Jika diperlukan, gambar juga konektor untuk pose dan tangan
       if (results.poseLandmarks)
         drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00' });
       if (results.leftHandLandmarks)
@@ -118,15 +102,15 @@
         drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#0000FF' });
     });
 
+    // Gunakan helper Camera dari MediaPipe untuk mendapatkan stream kamera (meminta izin hanya sekali)
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await holistic.send({ image: videoElement });
-      }
+      },
+      width: 640,
+      height: 480
     });
-
-    setupCamera().then(() => {
-      camera.start();
-    });
+    camera.start();
   </script>
 </body>
 </html>
