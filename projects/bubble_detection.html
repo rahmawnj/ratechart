@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaPipe Holistic & Matter.js: Topeng, Label, & Natural Bubble</title>
+  <!-- MediaPipe Holistic & Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- Matter.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <!-- Tone.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      cursor: pointer;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+    }
+    video {
+      width: 100%;
+      display: block;
+      object-fit: contain;
+      transform: scaleX(-1);
+    }
+    #output, #matterCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+    #matterCanvas {
+      background: transparent;
+    }
+    #startButton {
+  position: absolute; /* posisi relatif terhadap container */
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px;
+      background: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="output"></canvas>
+    <canvas id="matterCanvas"></canvas>
+        <button id="startButton">&#128266;</button>
+
+  </div>
+
+  <script>
+    // ===== Tone.js Setup =====
+    const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+    let audioStarted = false;
+
+    document.getElementById('startButton').addEventListener('click', async () => {
+      await Tone.start();
+      audioStarted = true;
+      document.getElementById('startButton').style.display = 'none';
+    });
+
+    // ===== MediaPipe Holistic Setup =====
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    function adjustCanvasSize() {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      matterRender.canvas.width = videoElement.videoWidth;
+      matterRender.canvas.height = videoElement.videoHeight;
+    }
+    videoElement.addEventListener('loadedmetadata', adjustCanvasSize);
+    window.addEventListener('resize', adjustCanvasSize);
+
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: true,
+      smoothSegmentation: true,
+      refineFaceLandmarks: true
+    });
+
+    let landmark19 = null, landmark20 = null;
+    let lastBubbleSpawnTime = 0;
+    const bubbleSpawnInterval = 200;
+
+    function getHandCenter(handLandmarks) {
+      let sumX = 0, sumY = 0;
+      handLandmarks.forEach(l => {
+        sumX += l.x;
+        sumY += l.y;
+      });
+      return { x: sumX / handLandmarks.length, y: sumY / handLandmarks.length };
+    }
+
+    holistic.onResults((results) => {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.faceLandmarks) {
+        const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+        canvasCtx.beginPath();
+        let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
+        canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
+        for (let i = 1; i < faceOvalIndices.length; i++) {
+          let point = results.faceLandmarks[faceOvalIndices[i]];
+          canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
+        }
+        canvasCtx.closePath();
+        canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
+        canvasCtx.fill();
+      }
+
+      let collision = false;
+      landmark19 = null; 
+      landmark20 = null;
+
+      if (results.poseLandmarks) {
+        // drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+        results.poseLandmarks.forEach((landmark, index) => {
+          const x = landmark.x * canvasElement.width;
+          const y = landmark.y * canvasElement.height;
+          canvasCtx.beginPath();
+          // canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
+          // canvasCtx.fillStyle = '#FF0000';
+          // canvasCtx.fill();
+          // canvasCtx.font = '10px Arial';
+          // canvasCtx.fillStyle = '#FFFFFF';
+          // canvasCtx.fillText(index, x + 4, y - 4);
+
+          if (index === 19 || index === 20) {
+            const additional = -landmark.z * 30;
+            const strokeRadius = Math.max(8, 8 + additional);
+            if (index === 19) {
+              landmark19 = { x, y, strokeRadius };
+            } else if (index === 20) {
+              landmark20 = { x, y, strokeRadius };
+            }
+            let strokeColor = (index === 19) ? '#FF0000' : '#0000FF';
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = strokeColor;
+            canvasCtx.stroke();
+          }
+        });
+      }
+
+      if (landmark19 && landmark20) {
+        const dx = landmark19.x - landmark20.x;
+        const dy = landmark19.y - landmark20.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (landmark19.strokeRadius + landmark20.strokeRadius)) {
+          collision = true;
+          [landmark19, landmark20].forEach(landmark => {
+            canvasCtx.beginPath();
+            canvasCtx.arc(landmark.x, landmark.y, landmark.strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = '#FFFF00';
+            canvasCtx.stroke();
+          });
+        }
+      }
+
+      if (collision && results.rightHandLandmarks) {
+        const handCenter = getHandCenter(results.rightHandLandmarks);
+        const handX = handCenter.x * canvasElement.width;
+        const handY = handCenter.y * canvasElement.height - 20;
+        const now = Date.now();
+        if (now - lastBubbleSpawnTime > bubbleSpawnInterval) {
+          if (audioStarted) {
+            const note = Math.random() > 0.5 ? 'C4' : 'E4';
+            synth.triggerAttackRelease(note, '8n');
+          }
+          spawnBubbleAtHand(handX, handY);
+          lastBubbleSpawnTime = now;
+        }
+      }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      }
+    });
+    camera.start();
+
+    // ===== Matter.js Setup =====
+    const matterCanvas = document.getElementById('matterCanvas');
+    const EngineMatter = Matter.Engine,
+          RenderMatter = Matter.Render,
+          RunnerMatter = Matter.Runner,
+          BodiesMatter = Matter.Bodies,
+          CompositeMatter = Matter.Composite,
+          BodyMatter = Matter.Body,
+          EventsMatter = Matter.Events;
+
+    const matterEngine = EngineMatter.create();
+    matterEngine.world.gravity.y = -0.2;
+
+    const matterRender = RenderMatter.create({
+      canvas: matterCanvas,
+      engine: matterEngine,
+      options: {
+        width: videoElement.videoWidth || 640,
+        height: videoElement.videoHeight || 480,
+        wireframes: false,
+        background: 'transparent'
+      }
+    });
+    RenderMatter.run(matterRender);
+
+    const matterRunner = RunnerMatter.create();
+    RunnerMatter.run(matterRunner, matterEngine);
+
+    function createRainbowTexture(radius) {
+      const size = radius * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const innerRadius = radius * 0.8;
+      const gradient = ctx.createRadialGradient(radius, radius, radius * 0.2, radius, radius, innerRadius);
+      
+      gradient.addColorStop(0, 'rgba(255,255,255,0.3)');
+      gradient.addColorStop(0.2, 'rgba(255,0,0,1)');
+      gradient.addColorStop(0.4, 'rgba(255,127,0,1)');
+      gradient.addColorStop(0.6, 'rgba(0,255,0,1)');
+      gradient.addColorStop(0.8, 'rgba(0,0,255,1)');
+      gradient.addColorStop(1, 'rgba(148,0,211,1)');
+      
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(radius, radius, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.lineWidth = radius * 0.2;
+      // ctx.strokeStyle = 'rgba(255,255,255,1)';
+      ctx.beginPath();
+      ctx.arc(radius, radius, radius - ctx.lineWidth / 2, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      return canvas.toDataURL();
+    }
+
+    let matterBubbles = [];
+
+    function spawnBubbleAtHand(x, y) {
+      const radius = Math.random() * 12 + 8;
+      const texture = createRainbowTexture(radius);
+      const bubble = BodiesMatter.circle(x, y, radius, {
+        restitution: 0.8,
+        frictionAir: 0.05,
+        render: {
+          sprite: {
+            texture: texture,
+            xScale: 1,
+            yScale: 1
+          }
+        }
+      });
+      bubble.creationTime = Date.now();
+      bubble.oscillationPhase = Math.random() * Math.PI * 2;
+      BodyMatter.setVelocity(bubble, { 
+        x: (Math.random() - 0.5) * 6,
+        y: -Math.random() * 1 - 2
+      });
+      CompositeMatter.add(matterEngine.world, bubble);
+      matterBubbles.push(bubble);
+    }
+
+    EventsMatter.on(matterEngine, "beforeUpdate", function(event) {
+      const currentTime = Date.now();
+      matterBubbles.forEach(bubble => {
+        const t = (currentTime - bubble.creationTime) / 1000;
+        const amplitude = 0.00008;
+        const frequency = 2 * Math.PI;
+        const forceX = amplitude * Math.sin(frequency * t + bubble.oscillationPhase);
+        BodyMatter.applyForce(bubble, bubble.position, { x: forceX, y: 0 });
+      });
+    });
+
+    EventsMatter.on(matterEngine, "afterUpdate", function() {
+      for (let i = matterBubbles.length - 1; i >= 0; i--) {
+        const bubble = matterBubbles[i];
+        if (
+          bubble.position.y + bubble.circleRadius * 2 < 0 ||
+          bubble.position.x < -100 ||
+          bubble.position.x > matterRender.canvas.width + 100
+        ) {
+          CompositeMatter.remove(matterEngine.world, bubble);
+          matterBubbles.splice(i, 1);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
