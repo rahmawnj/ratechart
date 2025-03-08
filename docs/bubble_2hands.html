@@ -47,7 +47,7 @@
       background: transparent;
     }
     #startButton {
-      position: absolute;
+  position: absolute; /* posisi relatif terhadap container */
       top: 20px;
       left: 50%;
       transform: translateX(-50%);
@@ -65,7 +65,8 @@
     <video id="video" autoplay playsinline></video>
     <canvas id="output"></canvas>
     <canvas id="matterCanvas"></canvas>
-    <button id="startButton">&#128266;</button>
+        <button id="startButton">&#128266;</button>
+
   </div>
 
   <script>
@@ -121,24 +122,17 @@
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
       if (results.faceLandmarks) {
-        // Ganti topeng dengan gambar mask.png
-        const img = new Image();
-        img.src = 'mask.png';
-        img.onload = () => {
-          // Hitung bounding box berdasarkan titik-titik landmark wajah
-          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-          results.faceLandmarks.forEach(l => {
-            const x = l.x * canvasElement.width;
-            const y = l.y * canvasElement.height;
-            if (x < minX) minX = x;
-            if (y < minY) minY = y;
-            if (x > maxX) maxX = x;
-            if (y > maxY) maxY = y;
-          });
-          const width = maxX - minX;
-          const height = maxY - minY;
-          canvasCtx.drawImage(img, minX, minY, width, height);
-        };
+        const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+        canvasCtx.beginPath();
+        let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
+        canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
+        for (let i = 1; i < faceOvalIndices.length; i++) {
+          let point = results.faceLandmarks[faceOvalIndices[i]];
+          canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
+        }
+        canvasCtx.closePath();
+        canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
+        canvasCtx.fill();
       }
 
       let collision = false;
@@ -146,9 +140,18 @@
       landmark20 = null;
 
       if (results.poseLandmarks) {
+        // drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
         results.poseLandmarks.forEach((landmark, index) => {
           const x = landmark.x * canvasElement.width;
           const y = landmark.y * canvasElement.height;
+          canvasCtx.beginPath();
+          // canvasCtx.arc(x, y, 3, 0, 2 * Math.PI);
+          // canvasCtx.fillStyle = '#FF0000';
+          // canvasCtx.fill();
+          // canvasCtx.font = '10px Arial';
+          // canvasCtx.fillStyle = '#FFFFFF';
+          // canvasCtx.fillText(index, x + 4, y - 4);
+
           if (index === 19 || index === 20) {
             const additional = -landmark.z * 30;
             const strokeRadius = Math.max(8, 8 + additional);
@@ -256,6 +259,7 @@
       ctx.fill();
       
       ctx.lineWidth = radius * 0.2;
+      // ctx.strokeStyle = 'rgba(255,255,255,1)';
       ctx.beginPath();
       ctx.arc(radius, radius, radius - ctx.lineWidth / 2, 0, Math.PI * 2);
       ctx.stroke();
@@ -315,4 +319,4 @@
     });
   </script>
 </body>
-</html>
+</html> 
