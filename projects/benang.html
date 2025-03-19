@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Proton.js + MediaPipe Hands: Simulasi Mouse Press/Release dengan Tail, Glow & Looping</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta charset="utf-8" />
+    <style type="text/css">
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+      /* Video sebagai background full */
+      #video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        z-index: 1;
+        transform: scaleX(-1);
+      }
+      /* Canvas untuk Proton.js */
+      #canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 2;
+        transform: scaleX(-1);
+      }
+      /* Canvas overlay untuk menggambar landmark */
+      #overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 3;
+        pointer-events: none;
+        transform: scaleX(-1);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Video kamera full background -->
+    <video id="video" autoplay playsinline muted></video>
+    <!-- Canvas untuk Proton.js -->
+    <canvas id="canvas"></canvas>
+    <!-- Canvas overlay untuk gambar landmark tangan -->
+    <canvas id="overlay"></canvas>
+
+    <!-- Proton.js -->
+    <script src="https://drawcall.github.io/Proton/examples/lib/proton.min.js"></script>
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+      // ========================
+      // PART 1: SETUP VIDEO BACKGROUND via MediaPipe Camera Utils
+      // ========================
+      const videoElement = document.getElementById("video");
+      // Camera Utils akan mengurus stream & izin kamera.
+
+      // ========================
+      // PART 2: SETUP PROTON.JS
+      // ========================
+      var proton, emitter, protonCanvas, protonCtx, attractionBehaviour;
+      // handPos akan diupdate berdasarkan posisi landmark 9
+      var handPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+      function initProton() {
+        protonCanvas = document.getElementById("canvas");
+        protonCanvas.width = window.innerWidth;
+        protonCanvas.height = window.innerHeight;
+        protonCtx = protonCanvas.getContext("2d");
+
+        proton = new Proton();
+        emitter = new Proton.Emitter();
+        emitter.damping = 0.008;
+        emitter.rate = new Proton.Rate(250);
+
+        emitter.addInitialize(new Proton.Mass(1));
+        // Atur ukuran partikel; ubah nilainya jika ingin lebih besar (misal: 4 -> 8 atau 16)
+        emitter.addInitialize(new Proton.Radius(4));
+        emitter.addInitialize(new Proton.Velocity(
+          new Proton.Span(1.5),
+          new Proton.Span(0, 360),
+          "polar"
+        ));
+
+        // Inisialisasi Attraction behaviour dengan nilai 0 (tidak aktif)
+        attractionBehaviour = new Proton.Attraction(handPos, 0, 0);
+        emitter.addBehaviour(new Proton.Color("random"));
+        emitter.addBehaviour(attractionBehaviour);
+        emitter.addBehaviour(new Proton.RandomDrift(10, 10, 0.05));
+
+        // Tambahkan behaviour CrossZone agar partikel looping ke sisi lain
+        var crossZone = new Proton.CrossZone(new Proton.RectZone(0, 0, protonCanvas.width, protonCanvas.height), "cross");
+        emitter.addBehaviour(crossZone);
+
+        // Posisi emitter di tengah canvas
+        emitter.p.x = protonCanvas.width / 2;
+        emitter.p.y = protonCanvas.height / 2;
+        emitter.emit("once");
+
+        proton.addEmitter(emitter);
+
+        // Renderer dengan efek "tail" menggunakan composite mode untuk menghapus sebagian pixel
+        var renderer = new Proton.CanvasRenderer(protonCanvas);
+        renderer.onProtonUpdate = function() {
+          protonCtx.save();
+          protonCtx.globalCompositeOperation = "destination-out";
+          protonCtx.fillStyle = "rgba(0, 0, 0, 0.05)";
+          protonCtx.fillRect(0, 0, protonCanvas.width, protonCanvas.height);
+          protonCtx.restore();
+        };
+
+        // Render partikel sebagai lingkaran berisi
+        renderer.onParticleUpdate = function(particle) {
+          protonCtx.beginPath();
+          protonCtx.fillStyle = particle.color;
+          protonCtx.arc(particle.p.x, particle.p.y, particle.radius, 0, Math.PI * 2);
+          protonCtx.fill();
+        };
+
+        proton.addRenderer(renderer);
+      }
+
+      function protonTick() {
+        requestAnimationFrame(protonTick);
+        proton.update();
+      }
+
+      initProton();
+      protonTick();
+
+      // ========================
+      // PART 3: SETUP OVERLAY CANVAS (LANDMARK INDICATOR)
+      // ========================
+      var overlayCanvas = document.getElementById("overlay");
+      overlayCanvas.width = window.innerWidth;
+      overlayCanvas.height = window.innerHeight;
+      var overlayCtx = overlayCanvas.getContext("2d");
+
+      // ========================
+      // PART 4: SETUP MEDIAPIPE HANDS
+      // ========================
+      const hands = new Hands({
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.5
+      });
+
+      hands.onResults(onResults);
+
+      // Gunakan Camera Utils untuk mengirim frame ke MediaPipe Hands
+      const camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({ image: videoElement });
+        },
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+      camera.start();
+
+      // ========================
+      // PART 5: HANDS CALLBACK & INTERAKSI
+      // ========================
+      // Fokus pada landmark nomor 9 (contoh: Middle finger MCP) dan nomor 12 (tip)
+      function onResults(results) {
+        // Bersihkan overlay canvas
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          const landmarks = results.multiHandLandmarks[0];
+          const lm9 = landmarks[9];
+          const lm12 = landmarks[12];
+
+          // Konversi koordinat normalized ke koordinat overlay
+          const x9 = lm9.x * overlayCanvas.width;
+          const y9 = lm9.y * overlayCanvas.height;
+          const x12 = lm12.x * overlayCanvas.width;
+          const y12 = lm12.y * overlayCanvas.height;
+
+          // Hitung jarak antara landmark 9 dan 12 untuk menentukan apakah tangan mengepal
+          const dist = Math.hypot(x12 - x9, y12 - y9);
+          const threshold = 30; // Sesuaikan threshold jika perlu
+          var isClosed = dist < threshold;
+
+          // Gambar indikator kursor dengan glow dan ukuran yang lebih besar:
+          overlayCtx.save();
+          overlayCtx.beginPath();
+          overlayCtx.arc(x9, y9, 20, 0, 2 * Math.PI); // radius 20
+          overlayCtx.fillStyle = isClosed ? "green" : "red";
+          overlayCtx.shadowBlur = 20;
+          overlayCtx.shadowColor = isClosed ? "rgba(0,255,0,0.8)" : "rgba(255,0,0,0.8)";
+          overlayCtx.fill();
+          overlayCtx.restore();
+
+          // Update handPos (posisi attraction) berdasarkan landmark 9
+          handPos.x = x9;
+          handPos.y = y9;
+
+          // Jika tangan tertutup (pressed), aktifkan attraction seperti mouse down;
+          // jika terbuka, nonaktifkan attraction (simulate mouse up)
+          if (isClosed) {
+            attractionBehaviour.reset(handPos, 10, 1200);
+          } else {
+            attractionBehaviour.reset(handPos, 0, 0);
+          }
+        } else {
+          // Jika tidak ada tangan terdeteksi, nonaktifkan attraction
+          attractionBehaviour.reset(handPos, 0, 0);
+        }
+      }
+
+      // ========================
+      // PART 6: HANDLE RESIZE
+      // ========================
+      window.addEventListener("resize", function() {
+        videoElement.width = window.innerWidth;
+        videoElement.height = window.innerHeight;
+
+        protonCanvas.width = window.innerWidth;
+        protonCanvas.height = window.innerHeight;
+
+        overlayCanvas.width = window.innerWidth;
+        overlayCanvas.height = window.innerHeight;
+      });
+    </script>
+  </body>
+</html>

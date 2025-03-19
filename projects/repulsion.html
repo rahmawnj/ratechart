@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flocking with MediaPipe Hand Control</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+    /* Layout: dua kolom pada layar lebar, satu kolom pada layar kecil */
+    .container {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+    }
+    .column {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Kolom kamera: video dan overlay */
+    #videoContainer {
+      background: #222;
+    }
+    #videoElement {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+    .indicator {
+      position: absolute;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    #leftIndicator { top: 10px; left: 10px; }
+    #rightIndicator { top: 10px; right: 10px; }
+    /* Kolom Three.js: canvas untuk flocking */
+    #threeCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    @media (max-width: 768px) {
+      .container {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Kolom kiri: Kamera & overlay -->
+    <div id="videoContainer" class="column">
+      <video id="videoElement" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="leftIndicator" class="indicator">Left: 0%</div>
+      <div id="rightIndicator" class="indicator">Right: 0%</div>
+    </div>
+    <!-- Kolom kanan: Three.js canvas untuk flocking -->
+    <div id="threeContainer" class="column">
+      <canvas id="threeCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- MediaPipe Holistic & Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    /* -------------- MEDIA PIPE SETUP -------------- */
+    const videoElement = document.getElementById("videoElement");
+    const overlay = document.getElementById("overlay");
+    const overlayCtx = overlay.getContext("2d");
+
+    function adjustOverlaySize() {
+      overlay.width = videoElement.clientWidth;
+      overlay.height = videoElement.clientHeight;
+    }
+    window.addEventListener("resize", adjustOverlaySize);
+
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      smoothSegmentation: false,
+      refineFaceLandmarks: false
+    });
+    holistic.onResults(onResults);
+
+    const cameraMP = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+    cameraMP.start();
+
+    // Fungsi hitung jarak antara dua titik (normalized)
+    function calcDistance(pt1, pt2) {
+      const dx = pt1.x - pt2.x;
+      const dy = pt1.y - pt2.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    // Mapping jarak ke persen (0% sampai 100%) berdasarkan range tertentu
+    function mapDistanceToPercent(d) {
+      const minD = 0.05, maxD = 0.3;
+      let p = (d - minD) / (maxD - minD);
+      p = Math.max(0, Math.min(1, p));
+      return Math.round(p * 100);
+    }
+
+    // Global control parameters (default)
+    // Left hand: mengontrol kecepatan maksimum (globalMaxSpeed): 0.5 -> 5
+    // Right hand: mengontrol flock tightness (cohesionMultiplier): 0 -> 2
+    let cohesionMultiplier = 1;
+    let globalMaxSpeed = 2;
+
+    const leftIndicator = document.getElementById("leftIndicator");
+    const rightIndicator = document.getElementById("rightIndicator");
+
+   function onResults(results) {
+  adjustOverlaySize();
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (results.leftHandLandmarks) {
+    window.drawConnectors(overlayCtx, results.leftHandLandmarks, Holistic.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+    window.drawLandmarks(overlayCtx, results.leftHandLandmarks, { color: '#FF0000', lineWidth: 1 });
+    const leftPt4 = results.leftHandLandmarks[4];
+    const leftPt8 = results.leftHandLandmarks[8];
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(leftPt4.x * overlay.width, leftPt4.y * overlay.height);
+    overlayCtx.lineTo(leftPt8.x * overlay.width, leftPt8.y * overlay.height);
+    overlayCtx.strokeStyle = '#FFFF00';
+    overlayCtx.lineWidth = 3;
+    overlayCtx.stroke();
+    const leftDist = calcDistance(leftPt4, leftPt8);
+    const leftPercent = mapDistanceToPercent(leftDist);
+    let leftMidX = (leftPt4.x + leftPt8.x) / 2 * overlay.width;
+    let leftMidY = (leftPt4.y + leftPt8.y) / 2 * overlay.height;
+    // Gambar teks dengan transformasi untuk membalikkan hanya teks
+    overlayCtx.save();
+    overlayCtx.scale(-1, 1);
+    // Karena kita membalik secara horizontal, gunakan - (leftMidX) untuk posisi x
+    overlayCtx.font = "16px sans-serif";
+    overlayCtx.fillStyle = "#FFFF00";
+    overlayCtx.fillText(`${leftPercent}%`, -leftMidX - 5, leftMidY - 5);
+    overlayCtx.fillText("Max Speed", -leftMidX - 5, leftMidY + 15);
+    overlayCtx.restore();
+    leftIndicator.textContent = `Max Speed: ${leftPercent}%`;
+    globalMaxSpeed = 0.5 + (leftPercent / 100) * (5 - 0.5);
+  } else {
+    leftIndicator.textContent = "Left: N/A";
+  }
+
+  if (results.rightHandLandmarks) {
+    window.drawConnectors(overlayCtx, results.rightHandLandmarks, Holistic.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
+    window.drawLandmarks(overlayCtx, results.rightHandLandmarks, { color: '#FF0000', lineWidth: 1 });
+    const rightPt4 = results.rightHandLandmarks[4];
+    const rightPt8 = results.rightHandLandmarks[8];
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(rightPt4.x * overlay.width, rightPt4.y * overlay.height);
+    overlayCtx.lineTo(rightPt8.x * overlay.width, rightPt8.y * overlay.height);
+    overlayCtx.strokeStyle = '#FFFF00';
+    overlayCtx.lineWidth = 3;
+    overlayCtx.stroke();
+    const rightDist = calcDistance(rightPt4, rightPt8);
+    const rightPercent = mapDistanceToPercent(rightDist);
+    let rightMidX = (rightPt4.x + rightPt8.x) / 2 * overlay.width;
+    let rightMidY = (rightPt4.y + rightPt8.y) / 2 * overlay.height;
+    overlayCtx.save();
+    overlayCtx.scale(-1, 1);
+    overlayCtx.font = "16px sans-serif";
+    overlayCtx.fillStyle = "#FFFF00";
+    overlayCtx.fillText(`${rightPercent}%`, -rightMidX - 5, rightMidY - 5);
+    overlayCtx.fillText("Tightness", -rightMidX - 5, rightMidY + 15);
+    overlayCtx.restore();
+    rightIndicator.textContent = `Tightness: ${rightPercent}%`;
+    cohesionMultiplier = (rightPercent / 100) * 2;
+  } else {
+    rightIndicator.textContent = "Right: N/A";
+  }
+}
+
+
+    /* -------------- THREE.JS BOIDS SETUP -------------- */
+    // Setup untuk kolom kanan (Three.js canvas)
+    const threeCanvas = document.getElementById("threeCanvas");
+    const scene = new THREE.Scene();
+    const camera3 = new THREE.PerspectiveCamera(75, (window.innerWidth/2) / window.innerHeight, 1, 1000);
+    camera3.position.z = 150;
+    const renderer3 = new THREE.WebGLRenderer({ antialias: true, canvas: threeCanvas });
+    renderer3.setSize(window.innerWidth/2, window.innerHeight);
+    window.addEventListener('resize', () => {
+      const width = window.innerWidth/2;
+      const height = window.innerHeight;
+      camera3.aspect = width/height;
+      camera3.updateProjectionMatrix();
+      renderer3.setSize(width, height);
+    });
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xaaaaaa);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(1, 1, 1);
+    scene.add(directionalLight);
+
+    // Boid class
+    class Boid {
+      constructor() {
+        this.position = new THREE.Vector3(
+          (Math.random()-0.5)*200,
+          (Math.random()-0.5)*200,
+          (Math.random()-0.5)*200
+        );
+        this.velocity = new THREE.Vector3(
+          (Math.random()-0.5)*2,
+          (Math.random()-0.5)*2,
+          (Math.random()-0.5)*2
+        );
+        this.acceleration = new THREE.Vector3();
+        this.maxSpeed = globalMaxSpeed;
+        this.maxForce = 0.05;
+        
+        const geometry = new THREE.SphereGeometry(2, 8, 8);
+        const pastelColors = [0xFADADD, 0xA3E3ED, 0xC1E1C1, 0xFFF5BA, 0xD8BFD8];
+        const color = pastelColors[Math.floor(Math.random()*pastelColors.length)];
+        const material = new THREE.MeshPhongMaterial({ color: color });
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        scene.add(this.mesh);
+      }
+      
+      update() {
+        this.maxSpeed = globalMaxSpeed;
+        this.velocity.add(this.acceleration);
+        if(this.velocity.length() > this.maxSpeed) {
+          this.velocity.setLength(this.maxSpeed);
+        }
+        this.position.add(this.velocity);
+        this.acceleration.set(0, 0, 0);
+        this.mesh.position.copy(this.position);
+        if(this.velocity.lengthSq() > 0.0001) {
+          this.mesh.lookAt(this.position.clone().add(this.velocity));
+        }
+      }
+      
+      applyForce(force) {
+        this.acceleration.add(force);
+      }
+      
+      align(boids) {
+        let perceptionRadius = 50;
+        let steering = new THREE.Vector3();
+        let total = 0;
+        boids.forEach(other => {
+          if(other !== this && this.position.distanceTo(other.position) < perceptionRadius) {
+            steering.add(other.velocity);
+            total++;
+          }
+        });
+        if(total > 0) {
+          steering.divideScalar(total);
+          steering.setLength(this.maxSpeed);
+          steering.sub(this.velocity);
+          if(steering.length() > this.maxForce) steering.setLength(this.maxForce);
+        }
+        return steering;
+      }
+      
+      cohere(boids) {
+        let perceptionRadius = 50;
+        let steering = new THREE.Vector3();
+        let total = 0;
+        boids.forEach(other => {
+          if(other !== this && this.position.distanceTo(other.position) < perceptionRadius) {
+            steering.add(other.position);
+            total++;
+          }
+        });
+        if(total > 0) {
+          steering.divideScalar(total);
+          steering.sub(this.position);
+          steering.setLength(this.maxSpeed);
+          steering.sub(this.velocity);
+          if(steering.length() > this.maxForce) steering.setLength(this.maxForce);
+        }
+        return steering;
+      }
+      
+      separate(boids) {
+        let perceptionRadius = 25;
+        let steering = new THREE.Vector3();
+        let total = 0;
+        boids.forEach(other => {
+          let d = this.position.distanceTo(other.position);
+          if(other !== this && d < perceptionRadius) {
+            let diff = this.position.clone().sub(other.position);
+            diff.divideScalar(d);
+            steering.add(diff);
+            total++;
+          }
+        });
+        if(total > 0) {
+          steering.divideScalar(total);
+          steering.setLength(this.maxSpeed);
+          steering.sub(this.velocity);
+          if(steering.length() > this.maxForce) steering.setLength(this.maxForce);
+        }
+        return steering;
+      }
+      
+      centerAttraction() {
+        const center = new THREE.Vector3(0, 0, 0);
+        let desired = center.clone().sub(this.position);
+        desired.setLength(this.maxSpeed);
+        let steer = desired.sub(this.velocity);
+        if(steer.length() > this.maxForce) steer.setLength(this.maxForce);
+        return steer;
+      }
+      
+      flockWithCenter(boids) {
+        let alignment = this.align(boids);
+        let cohesion = this.cohere(boids).multiplyScalar(cohesionMultiplier);
+        let separation = this.separate(boids);
+        this.applyForce(alignment);
+        this.applyForce(cohesion);
+        this.applyForce(separation);
+        let centerForce = this.centerAttraction();
+        this.applyForce(centerForce);
+      }
+      
+      edges() {
+        const boundary = 200;
+        if(this.position.x > boundary) this.position.x = -boundary;
+        if(this.position.x < -boundary) this.position.x = boundary;
+        if(this.position.y > boundary) this.position.y = -boundary;
+        if(this.position.y < -boundary) this.position.y = boundary;
+        if(this.position.z > boundary) this.position.z = -boundary;
+        if(this.position.z < -boundary) this.position.z = boundary;
+      }
+    }
+    
+    const boids = [];
+    const NUM_BOIDS = 100;
+    for(let i = 0; i < NUM_BOIDS; i++){
+      boids.push(new Boid());
+    }
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      boids.forEach(boid => {
+        boid.flockWithCenter(boids);
+        boid.update();
+        boid.edges();
+      });
+      renderer3.render(scene, camera3);
+    }
+    animate();
+    
+    window.addEventListener('resize', () => {
+      const width = window.innerWidth/2;
+      const height = window.innerHeight;
+      camera3.aspect = width/height;
+      camera3.updateProjectionMatrix();
+      renderer3.setSize(width, height);
+    });
+  </script>
+</body>
+</html>

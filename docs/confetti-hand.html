@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaPipe Holistic & Confetti.js: Topeng, Label, & Natural Confetti</title>
+  <!-- MediaPipe Holistic & Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- Confetti.js -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+  <!-- Tone.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+    }
+    video {
+      width: 100%;
+      display: block;
+      object-fit: contain;
+      transform: scaleX(-1);
+    }
+    #output, #confetti-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+    #confetti-canvas {
+      background: transparent;
+    }
+    #startButton {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px;
+      background: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="output"></canvas>
+    <canvas id="confetti-canvas"></canvas>
+    <button id="startButton">&#128266;</button>
+  </div>
+
+  <script>
+    // ===== Tone.js Setup =====
+    const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+    let audioStarted = false;
+
+    document.getElementById('startButton').addEventListener('click', async () => {
+      await Tone.start();
+      audioStarted = true;
+      document.getElementById('startButton').style.display = 'none';
+    });
+
+    // ===== MediaPipe Holistic Setup =====
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    function adjustCanvasSize() {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      // Sesuaikan juga ukuran canvas confetti
+      confettiCanvas.width = videoElement.videoWidth;
+      confettiCanvas.height = videoElement.videoHeight;
+    }
+    videoElement.addEventListener('loadedmetadata', adjustCanvasSize);
+    window.addEventListener('resize', adjustCanvasSize);
+
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: true,
+      smoothSegmentation: true,
+      refineFaceLandmarks: true
+    });
+
+    let landmark19 = null, landmark20 = null;
+    let lastConfettiSpawnTime = 0;
+    const confettiSpawnInterval = 200; // interval dalam milidetik
+
+    function getHandCenter(handLandmarks) {
+      let sumX = 0, sumY = 0;
+      handLandmarks.forEach(l => {
+        sumX += l.x;
+        sumY += l.y;
+      });
+      return { x: sumX / handLandmarks.length, y: sumY / handLandmarks.length };
+    }
+
+    holistic.onResults((results) => {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.faceLandmarks) {
+        const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+        canvasCtx.beginPath();
+        let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
+        canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
+        for (let i = 1; i < faceOvalIndices.length; i++) {
+          let point = results.faceLandmarks[faceOvalIndices[i]];
+          canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
+        }
+        canvasCtx.closePath();
+        canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
+        canvasCtx.fill();
+      }
+
+      let collision = false;
+      landmark19 = null; 
+      landmark20 = null;
+
+      if (results.poseLandmarks) {
+        results.poseLandmarks.forEach((landmark, index) => {
+          const x = landmark.x * canvasElement.width;
+          const y = landmark.y * canvasElement.height;
+
+          if (index === 19 || index === 20) {
+            const additional = -landmark.z * 30;
+            const strokeRadius = Math.max(8, 8 + additional);
+            if (index === 19) {
+              landmark19 = { x, y, strokeRadius };
+            } else if (index === 20) {
+              landmark20 = { x, y, strokeRadius };
+            }
+            let strokeColor = (index === 19) ? '#FF0000' : '#0000FF';
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = strokeColor;
+            canvasCtx.stroke();
+          }
+        });
+      }
+
+      if (landmark19 && landmark20) {
+        const dx = landmark19.x - landmark20.x;
+        const dy = landmark19.y - landmark20.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (landmark19.strokeRadius + landmark20.strokeRadius)) {
+          collision = true;
+          [landmark19, landmark20].forEach(landmark => {
+            canvasCtx.beginPath();
+            canvasCtx.arc(landmark.x, landmark.y, landmark.strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = '#FFFF00';
+            canvasCtx.stroke();
+          });
+        }
+      }
+
+      if (collision && results.rightHandLandmarks) {
+        const handCenter = getHandCenter(results.rightHandLandmarks);
+        const handX = handCenter.x * canvasElement.width;
+        const handY = handCenter.y * canvasElement.height - 20;
+        const now = Date.now();
+        if (now - lastConfettiSpawnTime > confettiSpawnInterval) {
+          if (audioStarted) {
+            const note = Math.random() > 0.5 ? 'C4' : 'E4';
+            synth.triggerAttackRelease(note, '8n');
+          }
+          spawnConfettiAtHand(handX, handY);
+          lastConfettiSpawnTime = now;
+        }
+      }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      }
+    });
+    camera.start();
+
+    // ===== Confetti.js Setup =====
+    const confettiCanvas = document.getElementById('confetti-canvas');
+    const confettiInstance = confetti.create(confettiCanvas, { resize: true, useWorker: true });
+
+    function spawnConfettiAtHand(x, y) {
+      // Normalisasi koordinat (0-1) berdasarkan ukuran canvas output
+      const xNorm = x / canvasElement.width;
+      const yNorm = y / canvasElement.height;
+      confettiInstance({
+        particleCount: 100,
+        spread: 70,
+        origin: { x: xNorm, y: yNorm }
+      });
+    }
+  </script>
+</body>
+</html>

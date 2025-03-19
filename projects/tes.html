@@ -1,81 +1,262 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Animasi Halo Neon</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D MediaPipe Holistic & Cannon.js: Bouncing Balloons</title>
+  <!-- MediaPipe Holistic & Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <!-- Three.js -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <!-- Cannon.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  <!-- Tone.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
   <style>
-    body {
-      margin: 0;
-      overflow: hidden;
-      background: #000;
+    body { margin: 0; overflow: hidden; background: #000; }
+    #startButton {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px;
+      background: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 1000;
     }
-    canvas {
-      display: block;
-    }
+    /* Sembunyikan video; video feed akan dipakai sebagai texture background */
+    video { display: none; }
   </style>
 </head>
 <body>
-  <!-- Sertakan p5.js -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <button id="startButton">&#128266;</button>
+  <video id="video" autoplay playsinline></video>
   <script>
-    let particles = [];
-    const numParticles = 100;
-    let center;
-    let globalAngle = 0;
+    // ===== Global Variables =====
+    let videoWidth = 640, videoHeight = 480;
+    const videoElement = document.getElementById('video');
+    const startButton = document.getElementById('startButton');
     
-    function setup() {
-      createCanvas(windowWidth, windowHeight);
-      center = createVector(width / 2, height / 2);
-      // Buat partikel dengan posisi acak dalam rentang radius tertentu
-      for (let i = 0; i < numParticles; i++) {
-        let angle = random(TWO_PI);
-        let radius = random(100, min(width, height) / 2);
-        let speed = random(0.001, 0.005);
-        particles.push({ angle, radius, speed });
-      }
+    // ===== Tone.js Setup =====
+    const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+    let audioStarted = false;
+    startButton.addEventListener('click', async () => {
+      await Tone.start();
+      audioStarted = true;
+      startButton.style.display = 'none';
+    });
+    
+    // ===== MediaPipe Holistic Setup =====
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: true,
+      smoothSegmentation: true,
+      refineFaceLandmarks: true
+    });
+    
+    // Variabel untuk collision landmark (misalnya, 19 dan 20)
+    let landmark19 = null, landmark20 = null;
+    let lastBubbleSpawnTime = 0;
+    const bubbleSpawnInterval = 200; // ms
+    
+    function getHandCenter(handLandmarks) {
+      let sumX = 0, sumY = 0;
+      handLandmarks.forEach(l => {
+        sumX += l.x;
+        sumY += l.y;
+      });
+      return { x: sumX / handLandmarks.length, y: sumY / handLandmarks.length };
     }
     
-    function draw() {
-      background(0);
-      globalAngle += 0.001;
-      let positions = [];
-      
-      // Set properti neon untuk garis dan partikel
-      strokeWeight(2);
-      drawingContext.shadowBlur = 20;
-      drawingContext.shadowColor = '#0ff'; // Warna neon cyan
-      stroke('#0ff');
-      noFill();
-      
-      // Hitung posisi masing-masing partikel dan gambarkan lingkaran kecil
-      for (let p of particles) {
-        // Osilasi kecil agar gerak partikel terasa dinamis
-        let oscillation = sin(frameCount * p.speed * 100 + p.angle) * 20;
-        let r = p.radius + oscillation;
-        let x = center.x + r * cos(p.angle + globalAngle);
-        let y = center.y + r * sin(p.angle + globalAngle);
-        positions.push(createVector(x, y));
-        ellipse(x, y, 8, 8);
-      }
-      
-      // Gambarkan garis yang menghubungkan partikel jika jaraknya dekat
-      for (let i = 0; i < positions.length; i++) {
-        for (let j = i + 1; j < positions.length; j++) {
-          let d = dist(positions[i].x, positions[i].y, positions[j].x, positions[j].y);
-          if (d < 100) {
-            // Transparansi garis berdasarkan jarak
-            let alpha = map(d, 0, 100, 255, 0);
-            stroke(0, 255, 255, alpha);
-            line(positions[i].x, positions[i].y, positions[j].x, positions[j].y);
+    holistic.onResults((results) => {
+      // Reset landmark 19 & 20
+      landmark19 = null;
+      landmark20 = null;
+      if (results.poseLandmarks) {
+        results.poseLandmarks.forEach((landmark, index) => {
+          if (index === 19 || index === 20) {
+            const x = landmark.x * videoWidth;
+            const y = landmark.y * videoHeight;
+            const additional = -landmark.z * 30;
+            const strokeRadius = Math.max(8, 8 + additional);
+            if (index === 19) {
+              landmark19 = { x, y, strokeRadius };
+            } else if (index === 20) {
+              landmark20 = { x, y, strokeRadius };
+            }
           }
+        });
+      }
+      let collision = false;
+      if (landmark19 && landmark20) {
+        const dx = landmark19.x - landmark20.x;
+        const dy = landmark19.y - landmark20.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (landmark19.strokeRadius + landmark20.strokeRadius)) {
+          collision = true;
         }
       }
+      // Jika collision dan terdapat landmark tangan kanan, spawn bubble
+      if (collision && results.rightHandLandmarks) {
+        const handCenter = getHandCenter(results.rightHandLandmarks);
+        const handX = handCenter.x * videoWidth;
+        const handY = handCenter.y * videoHeight;
+        if (Date.now() - lastBubbleSpawnTime > bubbleSpawnInterval) {
+          if (audioStarted) {
+            const note = Math.random() > 0.5 ? 'C4' : 'E4';
+            synth.triggerAttackRelease(note, '8n');
+          }
+          spawnBubbleAtHand(handX, handY);
+          lastBubbleSpawnTime = Date.now();
+        }
+      }
+    });
+    
+    // Gunakan MediaPipe Camera Utils untuk mengakses kamera
+    const cameraHolistic = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      },
+      width: videoWidth,
+      height: videoHeight
+    });
+    cameraHolistic.start();
+    
+    videoElement.addEventListener('loadedmetadata', () => {
+      videoWidth = videoElement.videoWidth;
+      videoHeight = videoElement.videoHeight;
+      renderer.setSize(videoWidth, videoHeight);
+      threeCamera.aspect = videoWidth / videoHeight;
+      threeCamera.updateProjectionMatrix();
+    });
+    
+    // ===== Three.js Setup =====
+    const scene = new THREE.Scene();
+    // Gunakan video feed sebagai background
+    const videoTexture = new THREE.VideoTexture(videoElement);
+    scene.background = videoTexture;
+    
+    const threeCamera = new THREE.PerspectiveCamera(75, videoWidth / videoHeight, 0.1, 1000);
+    threeCamera.position.z = 10;
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(videoWidth, videoHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Pencahayaan
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(0, 10, 10);
+    scene.add(directionalLight);
+    
+    // ===== Cannon.js Setup =====
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0);
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 10;
+    
+    // Array untuk menyimpan bubble
+    const bubbles = [];
+    
+    // Fungsi untuk mengonversi koordinat layar (dalam pixel) ke world coordinate pada bidang z=0
+    function screenToWorld(x, y) {
+      let ndcX = (x / videoWidth) * 2 - 1;
+      let ndcY = - (y / videoHeight) * 2 + 1;
+      let vector = new THREE.Vector3(ndcX, ndcY, 0.5);
+      vector.unproject(threeCamera);
+      let dir = vector.sub(threeCamera.position).normalize();
+      let distance = -threeCamera.position.z / dir.z;
+      let pos = threeCamera.position.clone().add(dir.multiplyScalar(distance));
+      return pos;
     }
     
-    function windowResized() {
-      resizeCanvas(windowWidth, windowHeight);
-      center = createVector(width / 2, height / 2);
+    // Fungsi untuk membuat texture rainbow menggunakan canvas
+    function createRainbowTexture(radius) {
+      const size = radius * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const innerRadius = radius * 0.8;
+      const gradient = ctx.createRadialGradient(radius, radius, radius * 0.2, radius, radius, innerRadius);
+      gradient.addColorStop(0, 'rgba(255,255,255,0.3)');
+      gradient.addColorStop(0.2, 'rgba(255,0,0,1)');
+      gradient.addColorStop(0.4, 'rgba(255,127,0,1)');
+      gradient.addColorStop(0.6, 'rgba(0,255,0,1)');
+      gradient.addColorStop(0.8, 'rgba(0,0,255,1)');
+      gradient.addColorStop(1, 'rgba(148,0,211,1)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(radius, radius, innerRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = radius * 0.2;
+      ctx.beginPath();
+      ctx.arc(radius, radius, radius - ctx.lineWidth / 2, 0, Math.PI * 2);
+      ctx.stroke();
+      return canvas;
     }
+    
+    // Fungsi spawn bubble di posisi tangan (koordinat layar)
+    function spawnBubbleAtHand(x, y) {
+      const pos = screenToWorld(x, y);
+      const radius = Math.random() * 0.5 + 0.5; // dalam world unit
+      // Buat sphere Three.js untuk bubble
+      const geometry = new THREE.SphereGeometry(radius, 32, 32);
+      const rainbowCanvas = createRainbowTexture(radius * 50);
+      const texture = new THREE.CanvasTexture(rainbowCanvas);
+      const material = new THREE.MeshPhongMaterial({ map: texture, transparent: true, opacity: 0.9 });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.copy(pos);
+      scene.add(mesh);
+      
+      // Buat body Cannon.js untuk bubble
+      const shape = new CANNON.Sphere(radius);
+      const body = new CANNON.Body({ mass: 1, shape: shape, material: new CANNON.Material({ restitution: 0.8 }) });
+      body.position.set(pos.x, pos.y, pos.z);
+      // Berikan kecepatan awal acak
+      body.velocity.set((Math.random()-0.5)*2, (Math.random()-0.5)*2, (Math.random()-0.5)*2);
+      world.addBody(body);
+      
+      bubbles.push({ mesh, body, creationTime: Date.now() });
+    }
+    
+    // ===== Animasi dan Update Physics =====
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = 1/60;
+      world.step(dt);
+      // Update posisi dan rotasi bubble dari Cannon.js
+      for (let i = bubbles.length - 1; i >= 0; i--) {
+        const bubble = bubbles[i];
+        bubble.mesh.position.copy(bubble.body.position);
+        bubble.mesh.quaternion.copy(bubble.body.quaternion);
+        // Hapus bubble jika keluar dari batas (misal, terlalu jauh)
+        if (bubble.body.position.y < -10 || Math.abs(bubble.body.position.x) > 20 || Math.abs(bubble.body.position.z) > 20) {
+          scene.remove(bubble.mesh);
+          world.removeBody(bubble.body);
+          bubbles.splice(i, 1);
+        }
+      }
+      renderer.render(scene, threeCamera);
+    }
+    animate();
+    
+    // Update ukuran renderer dan kamera saat resize window
+    window.addEventListener('resize', () => {
+      videoWidth = window.innerWidth;
+      videoHeight = window.innerHeight;
+      renderer.setSize(videoWidth, videoHeight);
+      threeCamera.aspect = videoWidth / videoHeight;
+      threeCamera.updateProjectionMatrix();
+    });
   </script>
 </body>
 </html>

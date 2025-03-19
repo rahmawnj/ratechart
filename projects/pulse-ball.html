@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interactive Morphing Blob</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <!-- Three.js, dat.GUI & SimplexNoise dari CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.7/dat.gui.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+    <script>
+      let scene, camera, renderer, blob;
+      let blobGeometry, blobMaterial;
+      let originalPositions;
+      const simplex = new SimplexNoise();
+      
+      // Parameter untuk mengontrol morphing
+      const params = {
+        amplitude: 0.5,
+        frequency: 0.8,
+        speed: 1.0,
+        rotationSpeed: 0.005,
+        wireframe: false
+      };
+
+      init();
+      createBlob();
+      animate();
+
+      function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+        
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 8);
+        
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        window.addEventListener('resize', onWindowResize);
+
+        // Setup dat.GUI, gunakan .onChange agar update live
+        const gui = new dat.GUI();
+        gui.add(params, 'amplitude', 0, 2, 0.01).onChange(updateBlob);
+        gui.add(params, 'frequency', 0, 3, 0.01).onChange(updateBlob);
+        gui.add(params, 'speed', 0, 3, 0.01);
+        gui.add(params, 'rotationSpeed', 0, 0.02, 0.001);
+        gui.add(params, 'wireframe').onChange(value => {
+          blobMaterial.wireframe = value;
+        });
+      }
+
+      function createBlob() {
+        // Buat sphere geometry dengan banyak segment untuk detail
+        blobGeometry = new THREE.SphereBufferGeometry(2, 128, 128);
+        // Salin posisi asli tiap vertex
+        originalPositions = blobGeometry.attributes.position.array.slice();
+
+        blobMaterial = new THREE.MeshStandardMaterial({
+          color: 0x0088ff,
+          wireframe: params.wireframe,
+          flatShading: true
+        });
+
+        blob = new THREE.Mesh(blobGeometry, blobMaterial);
+        scene.add(blob);
+
+        // Tambahkan cahaya
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0xffffff, 0.8);
+        pointLight.position.set(5, 5, 5);
+        scene.add(pointLight);
+      }
+
+      function updateBlob() {
+        // Fungsi ini akan dipanggil setiap parameter di GUI berubah
+        // Kita regenerate vertex positions berdasarkan nilai original dan noise
+        const positions = blobGeometry.attributes.position.array;
+        const time = performance.now() * 0.001 * params.speed;
+        for (let i = 0; i < positions.length; i += 3) {
+          // Ambil posisi asli
+          const ox = originalPositions[i];
+          const oy = originalPositions[i + 1];
+          const oz = originalPositions[i + 2];
+          // Hitung noise berdasarkan koordinat dan waktu
+          const noise = simplex.noise4D(ox * params.frequency, oy * params.frequency, oz * params.frequency, time);
+          // Update posisi dengan offset noise
+          // Untuk efek yang natural, kita tambahkan noise di sepanjang normal (approx. dengan mengalikan noise ke posisi asli)
+          positions[i]     = ox + (ox / 2) * noise * params.amplitude;
+          positions[i + 1] = oy + (oy / 2) * noise * params.amplitude;
+          positions[i + 2] = oz + (oz / 2) * noise * params.amplitude;
+        }
+        blobGeometry.attributes.position.needsUpdate = true;
+        blobGeometry.computeVertexNormals();
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        // Update blob setiap frame dengan noise
+        updateBlob();
+        // Rotasi blob untuk efek visual menarik
+        blob.rotation.y += params.rotationSpeed;
+        renderer.render(scene, camera);
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    </script>
+  </body>
+</html>

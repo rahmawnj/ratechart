@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Confetti on Click dengan Canvas Confetti & Tone.js</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+      background-color: #000;
+      font-family: Arial, sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+
+    #activateAudio {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 5px;
+      font-size: 18px;
+      cursor: pointer;
+      border: none;
+      background-color: #fff;
+      color: #000;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas untuk menampilkan efek confetti -->
+  <canvas id="confetti-canvas"></canvas>
+ 
+  <!-- Button untuk mengaktifkan audio -->
+  <button id="activateAudio">&#128266;</button>
+  
+  <!-- Muat library canvas-confetti dari CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+  <!-- Muat library Tone.js dari CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  <script>
+    // Atur canvas sesuai ukuran jendela
+    const canvas = document.getElementById('confetti-canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    // Membuat instance confetti yang terikat pada canvas
+    const myConfetti = confetti.create(canvas, {
+      resize: true,
+      useWorker: true
+    });
+    
+    // Membuat synth menggunakan Tone.js untuk sound effect
+    const synth = new Tone.Synth().toDestination();
+    
+    // Variabel untuk melacak apakah audio sudah diaktifkan
+    let audioActivated = false;
+    
+    // Fungsi untuk memainkan nada acak
+    function playSound() {
+      const notes = ["C4", "D4", "E4", "G4", "A4"];
+      const randomNote = notes[Math.floor(Math.random() * notes.length)];
+      synth.triggerAttackRelease(randomNote, "8n");
+    }
+    
+    // Fungsi untuk membuat efek kembang api (fireworks) di posisi tertentu (x, y)
+    function randomFirework(x, y) {
+      const count = 200; // Jumlah partikel total
+      const defaults = { origin: { x: x, y: y } };
+      
+      // Fungsi untuk menembakkan confetti dengan rasio partikel tertentu dan opsi tambahan
+      function fire(particleRatio, opts) {
+        myConfetti(Object.assign({}, defaults, opts, {
+          particleCount: Math.floor(count * particleRatio)
+        }));
+      }
+      
+      // Konfigurasi bertahap untuk menciptakan efek kembang api yang dinamis
+      fire(0.25, {
+        spread: 26,
+        startVelocity: 55,
+      });
+      fire(0.2, {
+        spread: 60,
+      });
+      fire(0.35, {
+        spread: 100,
+        decay: 0.91,
+        scalar: 0.8
+      });
+      fire(0.1, {
+        spread: 120,
+        startVelocity: 25,
+        decay: 0.92,
+        scalar: 1.2
+      });
+      fire(0.1, {
+        spread: 120,
+        startVelocity: 45,
+      });
+      
+      // Mainkan sound effect jika audio telah diaktifkan
+      if (audioActivated) {
+        playSound();
+      }
+    }
+    
+    // Memicu efek kembang api saat pengguna mengklik pada canvas
+    window.addEventListener('click', (event) => {
+      const x = event.clientX / window.innerWidth;
+      const y = event.clientY / window.innerHeight;
+      randomFirework(x, y);
+    });
+    
+    // Menyesuaikan ukuran canvas saat jendela diresize
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
+    
+    // Mengatur tombol untuk mengaktifkan audio
+    const btnActivateAudio = document.getElementById('activateAudio');
+    btnActivateAudio.addEventListener('click', () => {
+      Tone.start().then(() => {
+        audioActivated = true;
+        btnActivateAudio.style.display = 'none';
+        console.log("Audio telah diaktifkan");
+      });
+    });
+  </script>
+</body>
+</html>

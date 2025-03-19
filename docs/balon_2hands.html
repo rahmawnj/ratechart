@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediaPipe Holistic & Matter.js: Balon Dilempar ke Atas Cepat & Jatuh (Warna Pastel + Bayangan)</title>
+  <!-- MediaPipe Holistic & Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- Matter.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <!-- Tone.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    .container {
+      position: relative;
+      width: 100%;
+      max-width: 640px;
+    }
+    video {
+      width: 100%;
+      display: block;
+      object-fit: contain;
+      transform: scaleX(-1);
+    }
+    #output, #matterCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+    #matterCanvas {
+      background: transparent;
+    }
+    #startButton {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px;
+      background: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="output"></canvas>
+    <canvas id="matterCanvas"></canvas>
+    <button id="startButton">&#128266;</button>
+  </div>
+
+  <script>
+    // ===== Tone.js Setup =====
+    const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+    let audioStarted = false;
+    document.getElementById('startButton').addEventListener('click', async () => {
+      await Tone.start();
+      audioStarted = true;
+      document.getElementById('startButton').style.display = 'none';
+    });
+
+    // ===== MediaPipe Holistic Setup =====
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output');
+    const canvasCtx = canvasElement.getContext('2d');
+    function adjustCanvasSize() {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      matterRender.canvas.width = videoElement.videoWidth;
+      matterRender.canvas.height = videoElement.videoHeight;
+    }
+    videoElement.addEventListener('loadedmetadata', adjustCanvasSize);
+    window.addEventListener('resize', adjustCanvasSize);
+
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: true,
+      smoothSegmentation: true,
+      refineFaceLandmarks: true
+    });
+
+    let landmark19 = null, landmark20 = null;
+    let lastBubbleSpawnTime = 0;
+    // Spawn interval 50ms agar banyak bubble muncul saat collision terdeteksi
+    const bubbleSpawnInterval = 50;
+    function getHandCenter(handLandmarks) {
+      let sumX = 0, sumY = 0;
+      handLandmarks.forEach(l => {
+        sumX += l.x;
+        sumY += l.y;
+      });
+      return { x: sumX / handLandmarks.length, y: sumY / handLandmarks.length };
+    }
+
+    holistic.onResults((results) => {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      // Gambar masker wajah
+      if (results.faceLandmarks) {
+        const faceOvalIndices = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+        canvasCtx.beginPath();
+        let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
+        canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
+        for (let i = 1; i < faceOvalIndices.length; i++) {
+          let point = results.faceLandmarks[faceOvalIndices[i]];
+          canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
+        }
+        canvasCtx.closePath();
+        canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
+        canvasCtx.fill();
+      }
+
+      let collision = false;
+      landmark19 = null;
+      landmark20 = null;
+      if (results.poseLandmarks) {
+        results.poseLandmarks.forEach((landmark, index) => {
+          const x = landmark.x * canvasElement.width;
+          const y = landmark.y * canvasElement.height;
+          if (index === 19 || index === 20) {
+            const additional = -landmark.z * 30;
+            const strokeRadius = Math.max(8, 8 + additional);
+            if (index === 19) {
+              landmark19 = { x, y, strokeRadius };
+            } else if (index === 20) {
+              landmark20 = { x, y, strokeRadius };
+            }
+            let strokeColor = (index === 19) ? '#FF0000' : '#0000FF';
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = strokeColor;
+            canvasCtx.stroke();
+          }
+        });
+      }
+      if (landmark19 && landmark20) {
+        const dx = landmark19.x - landmark20.x;
+        const dy = landmark19.y - landmark20.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (landmark19.strokeRadius + landmark20.strokeRadius)) {
+          collision = true;
+          [landmark19, landmark20].forEach(landmark => {
+            canvasCtx.beginPath();
+            canvasCtx.arc(landmark.x, landmark.y, landmark.strokeRadius, 0, 2 * Math.PI);
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = '#FFFF00';
+            canvasCtx.stroke();
+          });
+        }
+      }
+      if (collision && results.rightHandLandmarks) {
+        const handCenter = getHandCenter(results.rightHandLandmarks);
+        const handX = handCenter.x * canvasElement.width;
+        const handY = handCenter.y * canvasElement.height - 20;
+        const now = Date.now();
+        if (now - lastBubbleSpawnTime > bubbleSpawnInterval) {
+          if (audioStarted) {
+            const note = Math.random() > 0.5 ? 'C4' : 'E4';
+            synth.triggerAttackRelease(note, '8n');
+          }
+          spawnBubbleAtHand(handX, handY);
+          lastBubbleSpawnTime = now;
+        }
+      }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      }
+    });
+    camera.start();
+
+    // ===== Matter.js Setup =====
+    const matterCanvas = document.getElementById('matterCanvas');
+    const EngineMatter = Matter.Engine,
+          RenderMatter = Matter.Render,
+          RunnerMatter = Matter.Runner,
+          BodiesMatter = Matter.Bodies,
+          CompositeMatter = Matter.Composite,
+          BodyMatter = Matter.Body,
+          EventsMatter = Matter.Events;
+
+    const matterEngine = EngineMatter.create();
+    // Gravitasi lebih tinggi agar bubble cepat jatuh setelah dilempar ke atas
+    matterEngine.world.gravity.y = 3;
+
+    const matterRender = RenderMatter.create({
+      canvas: matterCanvas,
+      engine: matterEngine,
+      options: {
+        width: videoElement.videoWidth || 640,
+        height: videoElement.videoHeight || 480,
+        wireframes: false,
+        background: 'transparent'
+      }
+    });
+    RenderMatter.run(matterRender);
+
+    const matterRunner = RunnerMatter.create();
+    RunnerMatter.run(matterRunner, matterEngine);
+
+    // Tidak menambahkan boundary, sehingga bubble langsung jatuh ke bawah
+
+    // Fungsi untuk membuat tekstur balon dengan warna pastel solid
+    function createPastelTexture(radius) {
+      const size = radius * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      // Daftar warna pastel
+      const pastelColors = [
+        "#FADADD", // pastel pink
+        "#A3E3ED", // pastel blue
+        "#C1E1C1", // pastel green
+        "#FFF5BA", // pastel yellow
+        "#D8BFD8"  // pastel purple
+      ];
+      // Pilih warna acak
+      const color = pastelColors[Math.floor(Math.random() * pastelColors.length)];
+      
+      // Gambar lingkaran solid dengan warna pastel
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(radius, radius, radius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Tambahkan border tipis
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.stroke();
+      
+      return canvas.toDataURL();
+    }
+
+    let matterBubbles = [];
+    function spawnBubbleAtHand(x, y) {
+      const radius = Math.random() * 12 + 8;
+      const texture = createPastelTexture(radius);
+      // Set restitution tinggi agar tabrakan antar bubble lebih mantul
+      const bubble = BodiesMatter.circle(x, y, radius, {
+        restitution: 1.2,
+        frictionAir: 0.01,
+        render: {
+          sprite: {
+            texture: texture,
+            xScale: 1,
+            yScale: 1
+          }
+        }
+      });
+      bubble.creationTime = Date.now();
+      bubble.oscillationPhase = Math.random() * Math.PI * 2;
+      // Ubah kecepatan awal: bubble dilempar ke atas dengan kecepatan tinggi namun tidak terlalu jauh
+      BodyMatter.setVelocity(bubble, { 
+        x: (Math.random() - 0.5) * 2,
+        y: - (Math.random() * 5 + 10)  // nilai antara -10 dan -15
+      });
+      CompositeMatter.add(matterEngine.world, bubble);
+      matterBubbles.push(bubble);
+    }
+
+    // Override render method Matter.Render untuk menggambar bayangan balon
+    const originalRender = matterRender.render;
+    matterRender.render = function() {
+      originalRender.call(this);
+      const ctx = this.context;
+      // Gambar bayangan untuk setiap bubble jika kecepatan melebihi threshold
+      matterBubbles.forEach(bubble => {
+        const vx = bubble.velocity.x;
+        const vy = bubble.velocity.y;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+        if (speed > 2) { // threshold kecepatan
+          ctx.save();
+          // Offset bayangan berdasarkan arah dan kecepatan (misalnya 5x kecepatan)
+          const offsetX = vx * 5;
+          const offsetY = vy * 5;
+          ctx.fillStyle = 'rgba(0,0,0,0.3)';
+          // Gambar elips bayangan di posisi bubble dengan offset
+          ctx.beginPath();
+          ctx.ellipse(bubble.position.x - offsetX, bubble.position.y - offsetY, bubble.circleRadius, bubble.circleRadius * 0.6, 0, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.restore();
+        }
+      });
+    };
+
+    // Hapus bubble jika sudah keluar dari batas layar (bagian bawah)
+    EventsMatter.on(matterEngine, "afterUpdate", function() {
+      const height = matterRender.canvas.height;
+      for (let i = matterBubbles.length - 1; i >= 0; i--) {
+        const bubble = matterBubbles[i];
+        if (
+          bubble.position.y - bubble.circleRadius > height ||
+          bubble.position.x < -100 ||
+          bubble.position.x > matterRender.canvas.width + 100
+        ) {
+          CompositeMatter.remove(matterEngine.world, bubble);
+          matterBubbles.splice(i, 1);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
