@@ -1,137 +1,231 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <title>Confetti on Click dengan Canvas Confetti & Tone.js</title>
+  <meta charset="UTF-8" />
+  <title>Deteksi Holistic + Confetti + Suara</title>
   <style>
-    html, body {
+    body {
       margin: 0;
       padding: 0;
+      background: #222;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: sans-serif;
       overflow: hidden;
-      width: 100%;
-      height: 100%;
-      background-color: #000;
-      font-family: Arial, sans-serif;
     }
-    canvas {
-      display: block;
+    .container {
+      position: relative;
     }
-
-    #activateAudio {
+    video, canvas {
+      border: 2px solid #444;
+      border-radius: 8px;
+    }
+    /* Jika ingin video dan canvas tampil mirror, gunakan transform */
+    #input_video, #output_canvas {
+      transform: scaleX(-1);
+    }
+    #output_canvas {
       position: absolute;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 5px;
-      font-size: 18px;
+      top: 0;
+      left: 0;
+    }
+    #activate-sound {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
       cursor: pointer;
-      border: none;
-      background-color: #fff;
-      color: #000;
-      border-radius: 5px;
+      z-index: 10;
     }
   </style>
 </head>
 <body>
-  <!-- Canvas untuk menampilkan efek confetti -->
-  <canvas id="confetti-canvas"></canvas>
- 
-  <!-- Button untuk mengaktifkan audio -->
-  <button id="activateAudio">&#128266;</button>
-  
-  <!-- Muat library canvas-confetti dari CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
-  <!-- Muat library Tone.js dari CDN -->
+  <button id="activate-sound">Aktifkan Suara</button>
+  <div class="container">
+    <!-- Video sebagai input kamera -->
+    <video id="input_video" width="640" height="480" playsinline></video>
+    <!-- Canvas untuk overlay deteksi -->
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+  </div>
+
+  <!-- Import MediaPipe Holistic dan Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <!-- Import Tone.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
+  <!-- Import canvas-confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
+
   <script>
-    // Atur canvas sesuai ukuran jendela
-    const canvas = document.getElementById('confetti-canvas');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    
-    // Membuat instance confetti yang terikat pada canvas
-    const myConfetti = confetti.create(canvas, {
-      resize: true,
-      useWorker: true
-    });
-    
-    // Membuat synth menggunakan Tone.js untuk sound effect
-    const synth = new Tone.Synth().toDestination();
-    
-    // Variabel untuk melacak apakah audio sudah diaktifkan
-    let audioActivated = false;
-    
-    // Fungsi untuk memainkan nada acak
-    function playSound() {
-      const notes = ["C4", "D4", "E4", "G4", "A4"];
-      const randomNote = notes[Math.floor(Math.random() * notes.length)];
-      synth.triggerAttackRelease(randomNote, "8n");
-    }
-    
-    // Fungsi untuk membuat efek kembang api (fireworks) di posisi tertentu (x, y)
-    function randomFirework(x, y) {
-      const count = 200; // Jumlah partikel total
-      const defaults = { origin: { x: x, y: y } };
-      
-      // Fungsi untuk menembakkan confetti dengan rasio partikel tertentu dan opsi tambahan
-      function fire(particleRatio, opts) {
-        myConfetti(Object.assign({}, defaults, opts, {
-          particleCount: Math.floor(count * particleRatio)
-        }));
-      }
-      
-      // Konfigurasi bertahap untuk menciptakan efek kembang api yang dinamis
-      fire(0.25, {
-        spread: 26,
-        startVelocity: 55,
-      });
-      fire(0.2, {
-        spread: 60,
-      });
-      fire(0.35, {
-        spread: 100,
-        decay: 0.91,
-        scalar: 0.8
-      });
-      fire(0.1, {
-        spread: 120,
-        startVelocity: 25,
-        decay: 0.92,
-        scalar: 1.2
-      });
-      fire(0.1, {
-        spread: 120,
-        startVelocity: 45,
-      });
-      
-      // Mainkan sound effect jika audio telah diaktifkan
-      if (audioActivated) {
-        playSound();
-      }
-    }
-    
-    // Memicu efek kembang api saat pengguna mengklik pada canvas
-    window.addEventListener('click', (event) => {
-      const x = event.clientX / window.innerWidth;
-      const y = event.clientY / window.innerHeight;
-      randomFirework(x, y);
-    });
-    
-    // Menyesuaikan ukuran canvas saat jendela diresize
-    window.addEventListener('resize', () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    });
-    
-    // Mengatur tombol untuk mengaktifkan audio
-    const btnActivateAudio = document.getElementById('activateAudio');
-    btnActivateAudio.addEventListener('click', () => {
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const activateSoundBtn = document.getElementById('activate-sound');
+
+    // Flag untuk mengaktifkan suara
+    let soundEnabled = false;
+    // Synth untuk efek spawn (bisa dijadikan test sound)
+    const spawnSynth = new Tone.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.05, decay: 0.2, sustain: 0.3, release: 1.0 }
+    }).toDestination();
+    // Synth untuk efek tumbukan antar confetti
+    const collisionSynth = new Tone.Synth({
+  oscillator: { type: 'sawtooth' },
+  envelope: {
+    attack: 0.005,
+    decay: 0.1,
+    sustain: 0.6,
+    release: 0.3
+  }
+}).toDestination();
+
+    activateSoundBtn.addEventListener('click', () => {
       Tone.start().then(() => {
-        audioActivated = true;
-        btnActivateAudio.style.display = 'none';
-        console.log("Audio telah diaktifkan");
+        soundEnabled = true;
+        // Test sound saat tombol diklik
+        spawnSynth.triggerAttackRelease("C5", "8n", Tone.now() + 0.01);
+        activateSoundBtn.textContent = "Suara Aktif";
       });
     });
+
+    // Inisialisasi MediaPipe Holistic
+    const holistic = new Holistic({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      selfieMode: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    let latestHolisticResults = null;
+    holistic.onResults(results => {
+      latestHolisticResults = results;
+    });
+
+    // Inisialisasi kamera untuk mengirim frame ke Holistic
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await holistic.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+
+    // Karena video dan canvas di-mirror, fungsi flipX membalik koordinat secara horizontal
+    function flipX(x) {
+      return canvasElement.width - x;
+    }
+
+    // Gambar wajah (contoh: membuat face oval) dari landmark holistic
+    function drawFace(ctx, landmarks) {
+      if (!landmarks) return;
+      const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+      ctx.beginPath();
+      const firstPoint = landmarks[faceOvalIndices[0]];
+      ctx.moveTo(flipX(firstPoint.x * canvasElement.width), firstPoint.y * canvasElement.height);
+      for (let i = 1; i < faceOvalIndices.length; i++) {
+        const point = landmarks[faceOvalIndices[i]];
+        ctx.lineTo(flipX(point.x * canvasElement.width), point.y * canvasElement.height);
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+      ctx.fill();
+    }
+
+    // Gambar landmark wajah 3D
+    function drawFaceLandmarks3D(ctx, landmarks) {
+      if (!landmarks) return;
+      landmarks.forEach(landmark => {
+        const x = flipX(landmark.x * canvasElement.width);
+        const y = landmark.y * canvasElement.height;
+        const z = landmark.z;
+        let size = 3 + (0.1 - z) * 30;
+        size = Math.max(1, size);
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, 2 * Math.PI);
+        ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+        ctx.fill();
+      });
+    }
+
+    // Variabel untuk cooldown confetti
+    let lastConfettiTime = 0;
+    const confettiCooldown = 300; // 300 ms
+
+    // Gambar tangan menggunakan landmark dari Holistic
+    // Menggunakan landmark nomor 20 untuk tangan kiri dan nomor 19 untuk tangan kanan
+    function drawHands(ctx, holisticResults) {
+      if (!holisticResults) return;
+      const circles = [];
+      if (holisticResults.leftHandLandmarks) {
+        const leftPoint = holisticResults.leftHandLandmarks[20];
+        const x = flipX(leftPoint.x * canvasElement.width);
+        const y = leftPoint.y * canvasElement.height;
+        circles.push({ x, y, color: "red", radius: 80 });
+      }
+      if (holisticResults.rightHandLandmarks) {
+        const rightPoint = holisticResults.rightHandLandmarks[19];
+        const x = flipX(rightPoint.x * canvasElement.width);
+        const y = rightPoint.y * canvasElement.height;
+        circles.push({ x, y, color: "blue", radius: 80 });
+      }
+      // Cek collision antara kedua tangan
+      if (circles.length === 2) {
+        const dx = circles[0].x - circles[1].x;
+        const dy = circles[0].y - circles[1].y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance < (circles[0].radius + circles[1].radius)) {
+          circles[0].color = circles[1].color = "yellow";
+          const now = Date.now();
+          if (now - lastConfettiTime > confettiCooldown) {
+            const avgX = (circles[0].x + circles[1].x) / 2;
+            const avgY = (circles[0].y + circles[1].y) / 2;
+            // Trigger confetti, origin nilai relatif (0-1)
+            confetti({
+              particleCount: 100,
+              spread: 70,
+              origin: { x: avgX / canvasElement.width, y: avgY / canvasElement.height }
+            });
+            lastConfettiTime = now;
+            if (soundEnabled) {
+              collisionSynth.triggerAttackRelease("G3", "8n", Tone.now() + 0.01);
+            }
+          }
+        }
+      }
+      // (Opsional) Gambar lingkaran tangan untuk debugging
+      circles.forEach(circle => {
+        ctx.beginPath();
+        ctx.arc(circle.x, circle.y, circle.radius, 0, 2 * Math.PI);
+        ctx.fillStyle = circle.color;
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "black";
+        ctx.stroke();
+      });
+    }
+
+    // Fungsi utama untuk menggambar video dan overlay holistic (wajah & tangan)
+    function drawCombined() {
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+      
+      if (latestHolisticResults) {
+        drawFace(canvasCtx, latestHolisticResults.faceLandmarks);
+        drawFaceLandmarks3D(canvasCtx, latestHolisticResults.faceLandmarks);
+        drawHands(canvasCtx, latestHolisticResults);
+      }
+      requestAnimationFrame(drawCombined);
+    }
+
+    drawCombined();
   </script>
 </body>
 </html>
