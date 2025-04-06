@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MediaPipe Holistic Tracking dengan Masker Wajah (Wajah & Tangan Saja)</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <title>MediaPipe Face Mesh Detection</title>
+  <!-- Sertakan library MediaPipe Face Mesh, camera dan drawing utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <style>
@@ -69,54 +70,54 @@
     videoElement.addEventListener('loadedmetadata', adjustCanvasSize);
     window.addEventListener('resize', adjustCanvasSize);
 
-    const holistic = new Holistic({
+    // Inisialisasi Face Mesh
+    const faceMesh = new FaceMesh({
       locateFile: (file) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+        `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     });
-    holistic.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      enableSegmentation: true,
-      smoothSegmentation: true,
-      refineFaceLandmarks: true
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
-    holistic.onResults((results) => {
-      // Bersihkan canvas overlay setiap frame
+    faceMesh.onResults((results) => {
+      // Bersihkan canvas setiap frame
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-      // Gambar topeng solid untuk wajah
-      if (results.faceLandmarks) {
-        const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
-        canvasCtx.beginPath();
-        let firstPoint = results.faceLandmarks[faceOvalIndices[0]];
-        canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
-        for (let i = 1; i < faceOvalIndices.length; i++) {
-          let point = results.faceLandmarks[faceOvalIndices[i]];
-          canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
-        }
-        canvasCtx.closePath();
-        canvasCtx.fillStyle = 'rgba(0, 0, 0, 1)';
-        canvasCtx.fill();
-      }
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        for (const landmarks of results.multiFaceLandmarks) {
+          // Gambar konektor dan landmark wajah secara default
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, { color: '#FFFFFF', lineWidth: 1 });
+          drawConnectors(canvasCtx, landmarks, FACEMESH_FACE_OVAL, { color: '#FFFFFF', lineWidth: 2 });
+          drawLandmarks(canvasCtx, landmarks, { color: '#FFFFFF', lineWidth: 1 });
 
-      // Gambar deteksi tangan secara standar (konektor & landmark)
-      if (results.leftHandLandmarks) {
-        drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, { color: '#FF0000', lineWidth: 2 });
-        drawLandmarks(canvasCtx, results.leftHandLandmarks, { color: '#FF0000', lineWidth: 1 });
-      }
-      if (results.rightHandLandmarks) {
-        drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, { color: '#0000FF', lineWidth: 2 });
-        drawLandmarks(canvasCtx, results.rightHandLandmarks, { color: '#0000FF', lineWidth: 1 });
+          // Contoh: Gambar topeng solid di atas area wajah (misal: masker dengan opacity)
+          // Kita menggunakan indeks wajah untuk menentukan area masker. 
+          // Indeks berikut merupakan contoh (misal: mengikuti kontur wajah).
+          const faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+          canvasCtx.beginPath();
+          let firstPoint = landmarks[faceOvalIndices[0]];
+          canvasCtx.moveTo(firstPoint.x * canvasElement.width, firstPoint.y * canvasElement.height);
+          for (let i = 1; i < faceOvalIndices.length; i++) {
+            let point = landmarks[faceOvalIndices[i]];
+            canvasCtx.lineTo(point.x * canvasElement.width, point.y * canvasElement.height);
+          }
+          canvasCtx.closePath();
+          canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Ubah opacity sesuai kebutuhan
+          canvasCtx.fill();
+        }
       }
     });
 
-    // Menggunakan satu getUserMedia melalui objek Camera dari MediaPipe
+    // Menggunakan objek Camera dari MediaPipe untuk mendapatkan frame video
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        await holistic.send({ image: videoElement });
+        await faceMesh.send({ image: videoElement });
       }
     });
+
     setupCamera().then(() => {
       camera.start();
     });

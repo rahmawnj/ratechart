@@ -2,12 +2,11 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <title>Deteksi Jari + Rope Karet</title>
+  <title>Deteksi Jari + Rope + FaceMesh + Suara</title>
   <style>
     body {
       margin: 0;
-      padding: 0;
-      background: #222;
+      background: #111;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -16,159 +15,118 @@
     }
     .container {
       position: relative;
+      width: 640px;
+      height: 480px;
     }
     video, canvas {
-      border: 2px solid #444;
-      border-radius: 8px;
-    }
-    #output_canvas {
       position: absolute;
+      width: 640px;
+      height: 480px;
       top: 0;
       left: 0;
-      transform: scaleX(-1); /* efek mirror */
-    }
-    #input_video {
+      border-radius: 10px;
       transform: scaleX(-1);
+    }
+    video {
+      z-index: 0;
+      opacity: 0.3;
+    }
+    #output_canvas {
+      z-index: 1;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Video sebagai input kamera (mode mirror) -->
-    <video id="input_video" width="640" height="480" playsinline></video>
-    <!-- Canvas untuk overlay rope -->
+    <video id="input_video" playsinline></video>
     <canvas id="output_canvas" width="640" height="480"></canvas>
   </div>
 
-  <!-- Import MediaPipe Holistic dan Camera Utils -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <!-- MediaPipe & Tone.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
 
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const ctx = canvasElement.getContext('2d');
 
-    // Fungsi flipX (karena video di-mirror)
-    function flipX(x) {
-      return canvasElement.width - x;
-    }
+    // ============ MediaPipe Setup ============
 
-    // Inisialisasi MediaPipe Holistic
-    const holistic = new Holistic({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
-    });
-    holistic.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      selfieMode: true,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
-    let latestResults = null;
-    holistic.onResults(results => {
-      latestResults = results;
-    });
+    const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
-    // Inisialisasi kamera
+    const faceMesh = new FaceMesh({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+    let latestHandsResults = null;
+    let latestFaceResults = null;
+
+    hands.onResults(results => latestHandsResults = results);
+    faceMesh.onResults(results => latestFaceResults = results);
+
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        await holistic.send({ image: videoElement });
+        await hands.send({ image: videoElement });
+        await faceMesh.send({ image: videoElement });
       },
       width: 640,
       height: 480
     });
     camera.start();
 
-    // Daftar jari dan landmark index yang digunakan (sesuai dokumentasi MediaPipe Hands)
-    const fingerNames = ["thumb", "index", "middle", "ring", "pinky"];
-    const landmarkIndices = {
-      thumb: 4,
-      index: 8,
-      middle: 12,
-      ring: 16,
-      pinky: 20
-    };
+    // ============ Tone.js Setup ============
+    const synths = Array.from({ length: 5 }, () =>
+      new Tone.Oscillator({ frequency: 440, type: 'sine', volume: -Infinity }).toDestination()
+    );
+    synths.forEach(s => s.start());
 
-    // Setiap rope disimulasikan sebagai rantai titik dengan Verlet integration
-    // Struktur: { points: [{pos:{x,y}, prev:{x,y}}, ...], numSegments }
-    const ropes = {};
-
-    // Jumlah segmen per rope
-    const numSegments = 15;
-
-    // Inisialisasi rope jika belum ada
-    function initRope(finger, startPos, endPos) {
-      const points = [];
+    // ============ Rope Simulation ============
+    function createRope(start, end, numSegments = 50) {
+      let points = [];
       for (let i = 0; i < numSegments; i++) {
-        // Interpolasi posisi antara start dan end
-        const t = i / (numSegments - 1);
-        const x = startPos.x * (1 - t) + endPos.x * t;
-        const y = startPos.y * (1 - t) + endPos.y * t;
-        points.push({
-          pos: { x, y },
-          prev: { x, y }
-        });
+        let t = i / (numSegments - 1);
+        let x = start.x * (1 - t) + end.x * t;
+        let y = start.y * (1 - t) + end.y * t;
+        points.push({ pos: { x, y }, prev: { x, y } });
       }
-      ropes[finger] = { points, numSegments };
+      return {
+        points,
+        segmentLength: Math.hypot(end.x - start.x, end.y - start.y) / (numSegments - 1),
+        movement: 0
+      };
     }
 
-    // Fungsi update endpoint rope berdasarkan deteksi jari
-    function updateRopeEndpoints(finger, leftPos, rightPos) {
-      // Jika rope belum ada, inisialisasi
-      if (!ropes[finger]) {
-        initRope(finger, leftPos, rightPos);
-        return;
-      }
-      const rope = ropes[finger];
-      // Set endpoint pertama dan terakhir ke posisi deteksi jari
-      rope.points[0].pos = { ...leftPos };
-      rope.points[rope.numSegments - 1].pos = { ...rightPos };
-      // Untuk endpoint, juga reset posisi sebelumnya agar tidak terseret efek inertia
-      rope.points[0].prev = { ...leftPos };
-      rope.points[rope.numSegments - 1].prev = { ...rightPos };
-    }
-
-    // Fungsi simulasi rope dengan Verlet integration dan constraint solving
-    function simulateRope(rope) {
-      // Update posisi titik-titik non-endpoint
-      for (let i = 1; i < rope.numSegments - 1; i++) {
-        const p = rope.points[i];
-        // Hitung kecepatan dari perbedaan posisi saat ini dan sebelumnya
-        const vx = (p.pos.x - p.prev.x) * 0.99; // redaman
-        const vy = (p.pos.y - p.prev.y) * 0.99;
-        // Simpan posisi saat ini sebagai posisi sebelumnya
-        p.prev = { ...p.pos };
-        // Update posisi (tanpa gaya eksternal, kecuali mungkin gravitasi jika diinginkan)
+    function updateRope(rope) {
+      let totalMovement = 0;
+      for (let i = 1; i < rope.points.length - 1; i++) {
+        let p = rope.points[i];
+        let vx = (p.pos.x - p.prev.x) * 0.98;
+        let vy = (p.pos.y - p.prev.y) * 0.98;
+        p.prev.x = p.pos.x;
+        p.prev.y = p.pos.y;
         p.pos.x += vx;
         p.pos.y += vy;
+        totalMovement += Math.hypot(vx, vy);
       }
-
-      // Constraint solving: pastikan jarak antar titik mendekati jarak ideal
-      // Hitung jarak ideal berdasarkan jarak endpoint saat ini
-      const dx = rope.points[rope.numSegments - 1].pos.x - rope.points[0].pos.x;
-      const dy = rope.points[rope.numSegments - 1].pos.y - rope.points[0].pos.y;
-      const totalDist = Math.hypot(dx, dy);
-      const idealSegment = totalDist / (rope.numSegments - 1);
-
-      // Lakukan beberapa iterasi untuk kestabilan
+      rope.movement = totalMovement / (rope.points.length - 2);
       for (let iter = 0; iter < 5; iter++) {
-        // Pastikan endpoint tidak berubah (sudah di-update)
-        for (let i = 0; i < rope.numSegments - 1; i++) {
-          const p1 = rope.points[i];
-          const p2 = rope.points[i + 1];
-          let dx = p2.pos.x - p1.pos.x;
-          let dy = p2.pos.y - p1.pos.y;
+        for (let i = 0; i < rope.points.length - 1; i++) {
+          let p1 = rope.points[i], p2 = rope.points[i + 1];
+          let dx = p2.pos.x - p1.pos.x, dy = p2.pos.y - p1.pos.y;
           let dist = Math.hypot(dx, dy);
-          const diff = (dist - idealSegment) / dist;
-          const offsetX = dx * 0.5 * diff;
-          const offsetY = dy * 0.5 * diff;
-          // Jika bukan endpoint, sesuaikan kedua titik
+          let diff = (dist - rope.segmentLength) / dist;
+          let offsetX = dx * 0.5 * diff;
+          let offsetY = dy * 0.5 * diff;
           if (i !== 0) {
             p1.pos.x += offsetX;
             p1.pos.y += offsetY;
           }
-          if (i !== rope.numSegments - 1) {
+          if (i !== rope.points.length - 1) {
             p2.pos.x -= offsetX;
             p2.pos.y -= offsetY;
           }
@@ -176,64 +134,136 @@
       }
     }
 
-    // Fungsi menggambar rope ke canvas
-    function drawRope(rope, color = "#e74c3c") {
+    function drawRope(ctx, rope) {
       ctx.beginPath();
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = color;
       ctx.moveTo(rope.points[0].pos.x, rope.points[0].pos.y);
-      for (let i = 1; i < rope.numSegments; i++) {
+      for (let i = 1; i < rope.points.length; i++) {
         ctx.lineTo(rope.points[i].pos.x, rope.points[i].pos.y);
       }
+      ctx.strokeStyle = getColorFromMovement(rope.movement);
+      ctx.lineWidth = 4;
       ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(rope.points[0].pos.x, rope.points[0].pos.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(rope.points[rope.points.length - 1].pos.x, rope.points[rope.points.length - 1].pos.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
     }
 
-    // Fungsi utama update dan gambar overlay
-    function drawOverlay() {
+    function getColorFromMovement(m) {
+      const clamped = Math.min(1, m / 5);
+      const hue = 240 - 240 * clamped;
+      return `hsl(${hue}, 100%, 50%)`;
+    }
+
+    function updateSound(index, rope) {
+      const volume = Tone.gainToDb(Math.min(1, rope.movement / 10));
+      const freq = Math.min(1000, 200 + (1000 / (rope.segmentLength + 1)));
+      synths[index].volume.rampTo(volume, 0.05);
+      synths[index].frequency.rampTo(freq, 0.1);
+    }
+
+    const fingerIndices = [4, 8, 12, 16, 20];
+    let ropes = fingerIndices.map(() =>
+      createRope({ x: -50, y: canvasElement.height / 2 }, { x: canvasElement.width + 50, y: canvasElement.height / 2 })
+    );
+
+    let idleTime = 0;
+
+    function getIdleWiggle(t, baseX, baseY, amplitude = 300, freq = 0.0001) {
+      const angle = t * freq + Math.random() * Math.PI * 2;
+      const radius = amplitude * (0.5 + Math.random());
+      return {
+        x: baseX + Math.cos(angle) * radius,
+        y: baseY + Math.sin(angle) * radius
+      };
+    }
+
+    // ============ Main Render Loop ============
+    function draw() {
       ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      // Gambar video (opsional, karena video juga tampil di background)
       ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-      
-      // Jika hasil deteksi tersedia dan kedua tangan terdeteksi
-      if (latestResults && latestResults.leftHandLandmarks && latestResults.rightHandLandmarks) {
-        // Untuk tiap jari, ambil landmark tip berdasarkan index
-        fingerNames.forEach(finger => {
-          const lmIndex = landmarkIndices[finger];
-          const leftLM = latestResults.leftHandLandmarks[lmIndex];
-          const rightLM = latestResults.rightHandLandmarks[lmIndex];
-          if (leftLM && rightLM) {
-            // Konversi koordinat (flip X agar mirror)
-            const leftPos = {
-              x: flipX(leftLM.x * canvasElement.width),
-              y: leftLM.y * canvasElement.height
-            };
-            const rightPos = {
-              x: flipX(rightLM.x * canvasElement.width),
-              y: rightLM.y * canvasElement.height
-            };
-            // Update endpoint rope untuk jari tersebut
-            updateRopeEndpoints(finger, leftPos, rightPos);
-          }
+
+      // Gambar wajah dulu (FaceMesh)
+    // Ganti bagian draw() yang menggambar wajah jadi lebih ringan:
+if (latestFaceResults?.multiFaceLandmarks?.length) {
+  for (const landmarks of latestFaceResults.multiFaceLandmarks) {
+    // Simpelkan jadi hanya garis oval dan topeng transparan
+          // drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, { color: '#FFFFFF', lineWidth: 2 });
+
+    // const indices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109];
+    // ctx.beginPath();
+    // let first = landmarks[indices[0]];
+    // ctx.moveTo(first.x * canvasElement.width, first.y * canvasElement.height);
+    // for (let i = 1; i < indices.length; i++) {
+    //   let pt = landmarks[indices[i]];
+    //   ctx.lineTo(pt.x * canvasElement.width, pt.y * canvasElement.height);
+    // }
+    // ctx.closePath();
+              drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, { color: '#FFFFFF', lineWidth: 6 });
+
+    // ctx.fillStyle = 'rgba(0, 0, 0)';
+    // ctx.fill();
+    // Hapus drawConnectors dan drawLandmarks (opsional)
+  }
+}
+
+
+      // Rope + tangan
+      let leftHand = null, rightHand = null;
+      if (latestHandsResults?.multiHandLandmarks && latestHandsResults.multiHandedness) {
+        latestHandsResults.multiHandedness.forEach((hand, i) => {
+          if (hand.label === "Left") leftHand = latestHandsResults.multiHandLandmarks[i];
+          else if (hand.label === "Right") rightHand = latestHandsResults.multiHandLandmarks[i];
         });
       }
-      
-      // Simulasikan dan gambar tiap rope yang telah diinisialisasi
-      Object.keys(ropes).forEach(finger => {
-        const rope = ropes[finger];
-        simulateRope(rope);
-        // Warna berbeda per jari (contoh)
-        let color = "#e74c3c";
-        if (finger === "thumb") color = "#f1c40f";
-        else if (finger === "index") color = "#3498db";
-        else if (finger === "middle") color = "#9b59b6";
-        else if (finger === "ring") color = "#2ecc71";
-        else if (finger === "pinky") color = "#e67e22";
-        drawRope(rope, color);
+
+      idleTime++;
+
+      ropes.forEach((rope, i) => {
+        let leftTip = leftHand ? leftHand[fingerIndices[i]] : null;
+        let rightTip = rightHand ? rightHand[fingerIndices[i]] : null;
+        let start, end;
+        const handsDetected = (leftHand ? 1 : 0) + (rightHand ? 1 : 0);
+
+        if (handsDetected < 2) {
+          let baseY = Math.random() * canvasElement.height;
+          start = leftTip
+            ? { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height }
+            : getIdleWiggle(idleTime + i * 100, -200, baseY);
+          end = rightTip
+            ? { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height }
+            : getIdleWiggle(idleTime + i * 200, canvasElement.width + 200, baseY);
+        } else {
+          start = { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height };
+          end = { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height };
+        }
+
+        if (leftTip) rope.points[0].pos = { ...start };
+        else rope.points[0] = { pos: { ...start }, prev: { ...start } };
+
+        if (rightTip) rope.points[rope.points.length - 1].pos = { ...end };
+        else rope.points[rope.points.length - 1] = { pos: { ...end }, prev: { ...end } };
+
+        rope.segmentLength = Math.hypot(end.x - start.x, end.y - start.y) / (rope.points.length - 1);
+
+        updateRope(rope);
+        drawRope(ctx, rope);
+        updateSound(i, rope);
       });
-      
-      requestAnimationFrame(drawOverlay);
+
+      requestAnimationFrame(draw);
     }
-    drawOverlay();
+
+    // ============ Start Audio on Click ============
+    document.body.addEventListener('click', async () => {
+      await Tone.start();
+      console.log('🔊 Audio started');
+    });
+
+    draw();
   </script>
 </body>
 </html>
