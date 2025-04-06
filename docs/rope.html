@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <title>Deteksi Jari + Rope + FaceMesh + Suara</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <style>
     body {
       margin: 0;
@@ -72,7 +74,7 @@
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await hands.send({ image: videoElement });
-        await faceMesh.send({ image: videoElement });
+        // await faceMesh.send({ image: videoElement });
       },
       width: 640,
       height: 480
