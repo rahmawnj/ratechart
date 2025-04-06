@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
+  
   <title>Deteksi Jari + Rope + Suara</title>
   <style>
     body {
@@ -12,16 +12,18 @@
       display: flex;
       justify-content: center;
       align-items: center;
+      height: 100vh;
       overflow: hidden;
     }
     .container {
       position: relative;
-       width: 100%;
+      width: 640px;
+      height: 480px;
     }
     video, canvas {
       position: absolute;
-      width: 100%;
-      height: 100%;
+      width: 640px;
+      height: 480px;
       top: 0;
       left: 0;
       border-radius: 10px;
@@ -30,8 +32,6 @@
     video {
       z-index: 0;
       opacity: 0.3;
-      object-fit: contain;
-
     }
     #output_canvas {
       z-index: 1;
@@ -56,13 +56,10 @@
     const canvasElement = document.getElementById('output_canvas');
     const ctx = canvasElement.getContext('2d');
 
-    // ============ MediaPipe Setup ============
-
     const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
     let latestHandsResults = null;
-
     hands.onResults(results => latestHandsResults = results);
 
     const camera = new Camera(videoElement, {
@@ -74,13 +71,11 @@
     });
     camera.start();
 
-    // ============ Tone.js Setup ============
     const synths = Array.from({ length: 5 }, () =>
       new Tone.Oscillator({ frequency: 440, type: 'sine', volume: -Infinity }).toDestination()
     );
     synths.forEach(s => s.start());
 
-    // ============ Rope Simulation ============
     function createRope(start, end, numSegments = 50) {
       let points = [];
       for (let i = 0; i < numSegments; i++) {
@@ -176,13 +171,10 @@
       };
     }
 
-    // ============ Main Render Loop ============
     function draw() {
       ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
 
-
-      // Rope + tangan
       let leftHand = null, rightHand = null;
       if (latestHandsResults?.multiHandLandmarks && latestHandsResults.multiHandedness) {
         latestHandsResults.multiHandedness.forEach((hand, i) => {
@@ -228,7 +220,6 @@
       requestAnimationFrame(draw);
     }
 
-    // ============ Start Audio on Click ============
     document.body.addEventListener('click', async () => {
       await Tone.start();
       console.log('🔊 Audio started');
