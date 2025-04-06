@@ -55,6 +55,7 @@ canvas {
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 
   <script>
     const videoElement = document.getElementById('input_video');
@@ -67,9 +68,24 @@ canvas {
     let latestHandsResults = null;
     hands.onResults(results => latestHandsResults = results);
 
+const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5,
+});
+
+let latestFaceResults = null;
+faceMesh.onResults(results => {
+  latestFaceResults = results;
+});
+
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await hands.send({ image: videoElement });
+          await faceMesh.send({ image: videoElement });
+
       },
       width: 640,
       height: 480
@@ -187,6 +203,15 @@ canvas {
           else if (hand.label === "Right") rightHand = latestHandsResults.multiHandLandmarks[i];
         });
       }
+      if (latestFaceResults?.multiFaceLandmarks) {
+  for (const landmarks of latestFaceResults.multiFaceLandmarks) {
+    drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, { color: 'black', lineWidth: 6 });
+    // drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, { color: '#FF0000' });
+    // drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, { color: '#0000FF' });
+    // drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, { color: '#FFFFFF' });
+  }
+}
+
 
       idleTime++;
 
