@@ -222,6 +222,13 @@ video, canvas {
     }
 
     draw();
+    function resizeCanvas() {
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+}
+videoElement.addEventListener('loadeddata', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
+
   </script>
 </body>
 </html>

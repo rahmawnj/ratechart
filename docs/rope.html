@@ -27,7 +27,7 @@ video, canvas {
   left: 0;
   width: 100vw;
   height: 100vh;
-  object-fit: cover;
+  object-fit: contain;
   transform: scaleX(-1); /* mirror */
 }
 
@@ -222,6 +222,13 @@ video, canvas {
     }
 
     draw();
+    function resizeCanvas() {
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+}
+videoElement.addEventListener('loadeddata', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
+
   </script>
 </body>
 </html>
