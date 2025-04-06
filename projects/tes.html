@@ -20,15 +20,20 @@
       width: 640px;
       height: 480px;
     }
-    video, canvas {
-      position: absolute;
-      width: 640px;
-      height: 480px;
-      top: 0;
-      left: 0;
-      border-radius: 10px;
-      transform: scaleX(-1);
-    }
+   video,
+canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scaleX(-1);
+  object-fit: contain;
+
+  max-width: 100vw;
+  max-height: 100vh;
+  width: auto;
+  height: auto;
+}
+
     video {
       z-index: 0;
       opacity: 0.3;
@@ -226,6 +231,37 @@
     });
 
     draw();
+    videoElement.addEventListener('loadedmetadata', () => {
+  resizeToVideo();
+});
+
+function resizeToVideo() {
+  const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+
+  // Ambil ukuran layar
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+
+  // Hitung ukuran ideal agar tidak stretching
+  let width = screenWidth;
+  let height = width / aspectRatio;
+
+  if (height > screenHeight) {
+    height = screenHeight;
+    width = height * aspectRatio;
+  }
+
+  // Apply ke elemen
+  videoElement.style.width = width + 'px';
+  videoElement.style.height = height + 'px';
+  canvasElement.style.width = width + 'px';
+  canvasElement.style.height = height + 'px';
+
+  // Juga sesuaikan ukuran internal canvas (agar gambar jelas)
+  canvasElement.width = videoElement.videoWidth;
+  canvasElement.height = videoElement.videoHeight;
+}
+
   </script>
 </body>
 </html>
