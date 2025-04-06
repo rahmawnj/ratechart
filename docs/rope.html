@@ -2,39 +2,36 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8" />
-  <title>Deteksi Jari + Rope Dinamis</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <title>Deteksi Jari + Rope + Suara</title>
   <style>
-    body, html {
-  margin: 0;
-  padding: 0;
-  background: #111;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-.container {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-}
-
-video, canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  transform: scaleX(-1); /* mirror */
-}
-
+    body {
+      margin: 0;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+    }
+    video, canvas {
+      position: absolute;
+      width: 640px;
+      height: 480px;
+      top: 0;
+      left: 0;
+      border-radius: 10px;
+      transform: scaleX(-1);
+    }
     video {
       z-index: 0;
       opacity: 0.3;
-      object-fit: cover;
-
     }
     #output_canvas {
       z-index: 1;
@@ -44,32 +41,29 @@ video, canvas {
 </head>
 <body>
   <div class="container">
-    <video id="input_video" width="640" height="480" playsinline></video>
+    <video id="input_video" playsinline></video>
     <canvas id="output_canvas" width="640" height="480"></canvas>
   </div>
 
+  <!-- MediaPipe & Tone.js -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
 
   <script>
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const ctx = canvasElement.getContext('2d');
 
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    // ============ MediaPipe Setup ============
+
+    const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
     let latestHandsResults = null;
-    hands.onResults(results => {
-      latestHandsResults = results;
-    });
+
+    hands.onResults(results => latestHandsResults = results);
 
     const camera = new Camera(videoElement, {
       onFrame: async () => {
@@ -80,19 +74,23 @@ video, canvas {
     });
     camera.start();
 
-    function createRope(start, end, numSegments = 30) {
+    // ============ Tone.js Setup ============
+    const synths = Array.from({ length: 5 }, () =>
+      new Tone.Oscillator({ frequency: 440, type: 'sine', volume: -Infinity }).toDestination()
+    );
+    synths.forEach(s => s.start());
+
+    // ============ Rope Simulation ============
+    function createRope(start, end, numSegments = 50) {
       let points = [];
       for (let i = 0; i < numSegments; i++) {
         let t = i / (numSegments - 1);
         let x = start.x * (1 - t) + end.x * t;
         let y = start.y * (1 - t) + end.y * t;
-        points.push({
-          pos: { x: x, y: y },
-          prev: { x: x, y: y }
-        });
+        points.push({ pos: { x, y }, prev: { x, y } });
       }
       return {
-        points: points,
+        points,
         segmentLength: Math.hypot(end.x - start.x, end.y - start.y) / (numSegments - 1),
         movement: 0
       };
@@ -102,8 +100,8 @@ video, canvas {
       let totalMovement = 0;
       for (let i = 1; i < rope.points.length - 1; i++) {
         let p = rope.points[i];
-        let vx = (p.pos.x - p.prev.x) * 0.99;
-        let vy = (p.pos.y - p.prev.y) * 0.99;
+        let vx = (p.pos.x - p.prev.x) * 0.98;
+        let vy = (p.pos.y - p.prev.y) * 0.98;
         p.prev.x = p.pos.x;
         p.prev.y = p.pos.y;
         p.pos.x += vx;
@@ -113,10 +111,8 @@ video, canvas {
       rope.movement = totalMovement / (rope.points.length - 2);
       for (let iter = 0; iter < 5; iter++) {
         for (let i = 0; i < rope.points.length - 1; i++) {
-          let p1 = rope.points[i];
-          let p2 = rope.points[i + 1];
-          let dx = p2.pos.x - p1.pos.x;
-          let dy = p2.pos.y - p1.pos.y;
+          let p1 = rope.points[i], p2 = rope.points[i + 1];
+          let dx = p2.pos.x - p1.pos.x, dy = p2.pos.y - p1.pos.y;
           let dist = Math.hypot(dx, dy);
           let diff = (dist - rope.segmentLength) / dist;
           let offsetX = dx * 0.5 * diff;
@@ -133,12 +129,6 @@ video, canvas {
       }
     }
 
-    function getColorFromMovement(movement) {
-      const clamped = Math.min(1, movement / 5); // Normalisasi ke [0..1]
-      const hue = 240 - 240 * clamped; // 240 = biru, 0 = merah
-      return `hsl(${hue}, 100%, 50%)`;
-    }
-
     function drawRope(ctx, rope) {
       ctx.beginPath();
       ctx.moveTo(rope.points[0].pos.x, rope.points[0].pos.y);
@@ -148,13 +138,32 @@ video, canvas {
       ctx.strokeStyle = getColorFromMovement(rope.movement);
       ctx.lineWidth = 4;
       ctx.stroke();
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(rope.points[0].pos.x, rope.points[0].pos.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(rope.points[rope.points.length - 1].pos.x, rope.points[rope.points.length - 1].pos.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+
+    function getColorFromMovement(m) {
+      const clamped = Math.min(1, m / 5);
+      const hue = 240 - 240 * clamped;
+      return `hsl(${hue}, 100%, 50%)`;
+    }
+
+    function updateSound(index, rope) {
+      const volume = Tone.gainToDb(Math.min(1, rope.movement / 10));
+      const freq = Math.min(1000, 200 + (1000 / (rope.segmentLength + 1)));
+      synths[index].volume.rampTo(volume, 0.05);
+      synths[index].frequency.rampTo(freq, 0.1);
     }
 
     const fingerIndices = [4, 8, 12, 16, 20];
-    let ropes = [];
-    for (let i = 0; i < 5; i++) {
-      ropes.push(createRope({ x: -50, y: canvasElement.height / 2 }, { x: canvasElement.width + 50, y: canvasElement.height / 2 }));
-    }
+    let ropes = fingerIndices.map(() =>
+      createRope({ x: -50, y: canvasElement.height / 2 }, { x: canvasElement.width + 50, y: canvasElement.height / 2 })
+    );
 
     let idleTime = 0;
 
@@ -167,69 +176,65 @@ video, canvas {
       };
     }
 
+    // ============ Main Render Loop ============
     function draw() {
       ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
 
+
+      // Rope + tangan
       let leftHand = null, rightHand = null;
-      if (latestHandsResults && latestHandsResults.multiHandLandmarks && latestHandsResults.multiHandedness) {
-        for (let i = 0; i < latestHandsResults.multiHandedness.length; i++) {
-          const label = latestHandsResults.multiHandedness[i].label;
-          if (label === "Left") {
-            leftHand = latestHandsResults.multiHandLandmarks[i];
-          } else if (label === "Right") {
-            rightHand = latestHandsResults.multiHandLandmarks[i];
-          }
-        }
+      if (latestHandsResults?.multiHandLandmarks && latestHandsResults.multiHandedness) {
+        latestHandsResults.multiHandedness.forEach((hand, i) => {
+          if (hand.label === "Left") leftHand = latestHandsResults.multiHandLandmarks[i];
+          else if (hand.label === "Right") rightHand = latestHandsResults.multiHandLandmarks[i];
+        });
       }
 
-      idleTime += 1;
+      idleTime++;
 
-      for (let i = 0; i < 5; i++) {
+      ropes.forEach((rope, i) => {
         let leftTip = leftHand ? leftHand[fingerIndices[i]] : null;
         let rightTip = rightHand ? rightHand[fingerIndices[i]] : null;
         let start, end;
-        const numHands = (leftHand ? 1 : 0) + (rightHand ? 1 : 0);
+        const handsDetected = (leftHand ? 1 : 0) + (rightHand ? 1 : 0);
 
-        if (numHands < 2) {
+        if (handsDetected < 2) {
           let baseY = Math.random() * canvasElement.height;
-          if (!leftTip && !rightTip) {
-            start = getIdleWiggle(idleTime + i * 100, -200, baseY);
-            end = getIdleWiggle(idleTime + i * 200, canvasElement.width + 200, baseY);
-          } else if (leftTip) {
-            start = { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height };
-            end = getIdleWiggle(idleTime + i * 200, canvasElement.width + 200, baseY);
-          } else {
-            start = getIdleWiggle(idleTime + i * 100, -200, baseY);
-            end = { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height };
-          }
+          start = leftTip
+            ? { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height }
+            : getIdleWiggle(idleTime + i * 100, -200, baseY);
+          end = rightTip
+            ? { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height }
+            : getIdleWiggle(idleTime + i * 200, canvasElement.width + 200, baseY);
         } else {
           start = { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height };
           end = { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height };
         }
 
-        let rope = ropes[i];
-        rope.points[0].pos = { ...start };
-        rope.points[0].prev = { ...start };
-        rope.points[rope.points.length - 1].pos = { ...end };
-        rope.points[rope.points.length - 1].prev = { ...end };
+        if (leftTip) rope.points[0].pos = { ...start };
+        else rope.points[0] = { pos: { ...start }, prev: { ...start } };
+
+        if (rightTip) rope.points[rope.points.length - 1].pos = { ...end };
+        else rope.points[rope.points.length - 1] = { pos: { ...end }, prev: { ...end } };
+
         rope.segmentLength = Math.hypot(end.x - start.x, end.y - start.y) / (rope.points.length - 1);
 
         updateRope(rope);
         drawRope(ctx, rope);
-      }
+        updateSound(i, rope);
+      });
 
       requestAnimationFrame(draw);
     }
 
-    draw();
-    function resizeCanvas() {
-  canvasElement.width = videoElement.videoWidth;
-  canvasElement.height = videoElement.videoHeight;
-}
-videoElement.addEventListener('loadeddata', resizeCanvas);
-window.addEventListener('resize', resizeCanvas);
+    // ============ Start Audio on Click ============
+    document.body.addEventListener('click', async () => {
+      await Tone.start();
+      console.log('🔊 Audio started');
+    });
 
+    draw();
   </script>
 </body>
 </html>
