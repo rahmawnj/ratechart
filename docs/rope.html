@@ -87,8 +87,7 @@ faceMesh.onResults(results => {
           await faceMesh.send({ image: videoElement });
 
       },
-      width: 640,
-      height: 480
+     
     });
     camera.start();
 
@@ -97,7 +96,7 @@ faceMesh.onResults(results => {
     );
     synths.forEach(s => s.start());
 
-    function createRope(start, end, numSegments = 50) {
+    function createRope(start, end, numSegments = 20) {
       let points = [];
       for (let i = 0; i < numSegments; i++) {
         let t = i / (numSegments - 1);
@@ -125,7 +124,7 @@ faceMesh.onResults(results => {
         totalMovement += Math.hypot(vx, vy);
       }
       rope.movement = totalMovement / (rope.points.length - 2);
-      for (let iter = 0; iter < 5; iter++) {
+      for (let iter = 0; iter < 10; iter++) {
         for (let i = 0; i < rope.points.length - 1; i++) {
           let p1 = rope.points[i], p2 = rope.points[i + 1];
           let dx = p2.pos.x - p1.pos.x, dy = p2.pos.y - p1.pos.y;
@@ -144,6 +143,26 @@ faceMesh.onResults(results => {
         }
       }
     }
+// 1. Efek: Reverb + Chorus + Filter
+const reverb = new Tone.Reverb({ decay: 3, wet: 0.4 }).toDestination();
+const chorus = new Tone.Chorus(4, 2.5, 0.5).connect(reverb);
+const filter = new Tone.Filter(800, "lowpass").connect(chorus);
+
+// 2. PolySynth dengan envelope
+const poly = new Tone.PolySynth(Tone.Synth, {
+  maxPolyphony: 5,
+  volume: -8,
+  oscillator: { type: "sawtooth" },
+  envelope: {
+    attack: 0.1,
+    decay: 0.2,
+    sustain: 0.5,
+    release: 1
+  }
+}).connect(filter);
+
+// Mulai synth
+poly.set({ detune: -120 }); // sedikit detune biar kaya
 
     function drawRope(ctx, rope) {
       ctx.beginPath();
@@ -169,12 +188,40 @@ faceMesh.onResults(results => {
       return `hsl(${hue}, 100%, 50%)`;
     }
 
-    function updateSound(index, rope) {
-      const volume = Tone.gainToDb(Math.min(1, rope.movement / 10));
-      const freq = Math.min(1000, 200 + (1000 / (rope.segmentLength + 1)));
-      synths[index].volume.rampTo(volume, 0.05);
-      synths[index].frequency.rampTo(freq, 0.1);
-    }
+   // definisikan skala pentatonik C mayor
+const pentatonic = ["C4","D4","E4","G4","A4","C5"];
+
+function updateSound(index, rope) {
+  // 1) normalisasi movement jadi 0–1
+  const mNorm = Math.min(1, rope.movement / 10);
+
+  // 2) pilih note dari skala pentatonik
+  const scaleIndex = Math.floor(mNorm * (pentatonic.length - 1));
+  const note = pentatonic[scaleIndex];
+
+  // 3) velocity lembut
+  const velocity = 0.1 + 0.6 * mNorm; 
+
+  // 4) jika merah (mNorm > 0.8), pakai durasi lebih panjang & triangle wave
+  let duration = "16n";
+  if (mNorm > 0.8) {
+    duration = "4n";
+    poly.set({ oscillator: { type: "triangle" } });
+    reverb.wet.rampTo(0.7, 0.2);
+  } else {
+    poly.set({ oscillator: { type: "sawtooth" } });
+    reverb.wet.rampTo(0.4, 0.2);
+  }
+
+  // 5) trigger dengan envelope polySynth yang sudah kita definisikan
+  poly.triggerAttackRelease(note, duration, undefined, velocity);
+
+  // 6) buka filter cutoff sedikit sesuai movement
+  const cutoff = 500 + mNorm * 2500;  // 500Hz → 3000Hz
+  filter.frequency.rampTo(cutoff, 0.1);
+}
+
+
 
     const fingerIndices = [4, 8, 12, 16, 20];
     let ropes = fingerIndices.map(() =>
