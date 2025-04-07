@@ -43,12 +43,15 @@
       right: 10px;
       z-index: 2;
     }
+
   </style>
 </head>
 <body>
+<canvas id="faceCanvas" style="position:absolute; top:0; left:0; z-index:0.5;"></canvas>
+
 <video id="camera" playsinline webkit-playsinline autoplay muted></video>
   <div id="modeIndicator">Mode: Attract</div>
-  <button id="soundToggle">&#128266;</button>
+  <!-- <button id="soundToggle">&#128266;</button> -->
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
@@ -56,6 +59,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
 
   <script>
     const Engine = Matter.Engine,
@@ -85,6 +90,33 @@
       }
     });
     
+    const faceCanvas = document.getElementById('faceCanvas');
+const faceCtx = faceCanvas.getContext('2d');
+faceCanvas.width = canvasWidth;
+faceCanvas.height = canvasHeight;
+
+const faceMesh = new FaceMesh({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+});
+
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+faceMesh.onResults((results) => {
+  faceCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  
+  if (results.multiFaceLandmarks) {
+    for (const landmarks of results.multiFaceLandmarks) {
+      drawConnectors(faceCtx, landmarks, FACEMESH_TESSELATION,
+        { color: '#ffffff88', lineWidth: 5 });
+    }
+  }
+});
+
     Render.run(render);
     const runner = Runner.create();
     Runner.run(runner, engine);
@@ -129,9 +161,11 @@
     });
 
     const cameraSetup = new Camera(camera, {
-      onFrame: async () => {
-        await hands.send({ image: camera });
-      },
+onFrame: async () => {
+  await hands.send({ image: camera });
+  await faceMesh.send({ image: camera });
+},
+
       width: canvasWidth,
       height: canvasHeight
     });
@@ -166,15 +200,17 @@
     World.add(world, balls);
 
     // Sound Control
-    let soundEnabled = false;
-    const soundToggle = document.getElementById('soundToggle');
     const synth = new Tone.Synth().toDestination();
     
-    soundToggle.addEventListener('click', () => {
-      soundEnabled = !soundEnabled;
-      soundToggle.innerText = soundEnabled ? "Disable Sound" : "Enable Sound";
-      if (soundEnabled) Tone.start();
-    });
+   // Baru: tap anywhere (mouse/touch) untuk on/off suara
+let soundEnabled = false;
+document.body.addEventListener('click', async () => {
+  soundEnabled = !soundEnabled;
+  // opsional: visual feedback
+  console.log('Sound', soundEnabled ? 'ENABLED' : 'DISABLED');
+  if (soundEnabled) await Tone.start();
+});
+
 
     // Physics Updates
     Events.on(engine, 'beforeUpdate', () => {

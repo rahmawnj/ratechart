@@ -1,292 +1,264 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
+  <title>Hand-Controlled Magnetic Balls</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
-  <title>Deteksi Jari + Rope + Suara</title>
+
   <style>
     body {
       margin: 0;
-      background: #111;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
       overflow: hidden;
     }
-    .container {
-      position: relative;
-      width: 640px;
-      height: 480px;
-    }
-   video,
-canvas {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scaleX(-1);
-  object-fit: contain;
-
-  max-width: 100vw;
-  max-height: 100vh;
-  width: auto;
-  height: auto;
-}
-
-    video {
+    #camera {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      /* Ubah opacity menjadi 1 agar tampilan kamera penuh */
+      opacity: 1;
+      align-items: center;
+      justify-content: center;
       z-index: 0;
-      opacity: 0.3;
+      transform: scaleX(-1);
     }
-    #output_canvas {
+    canvas {
+      position: absolute;
       z-index: 1;
-      pointer-events: none;
+      transform: scaleX(-1);
     }
+    #modeIndicator {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 20px;
+      z-index: 2;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+    #soundToggle {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+    }
+
   </style>
 </head>
 <body>
-  <div class="container">
-    <video id="input_video" playsinline></video>
-    <canvas id="output_canvas" width="640" height="480"></canvas>
-  </div>
+<canvas id="faceCanvas" style="position:absolute; top:0; left:0; z-index:0.5;"></canvas>
 
-  <!-- MediaPipe & Tone.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<video id="camera" playsinline webkit-playsinline autoplay muted></video>
+  <div id="modeIndicator">Mode: Attract</div>
+  <!-- <button id="soundToggle">&#128266;</button> -->
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.39/Tone.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
 
   <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const ctx = canvasElement.getContext('2d');
+    const Engine = Matter.Engine,
+          Render = Matter.Render,
+          Runner = Matter.Runner,
+          World = Matter.World,
+          Bodies = Matter.Bodies,
+          Body = Matter.Body,
+          Events = Matter.Events,
+          Vector = Matter.Vector;
 
-    const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    const engine = Engine.create();
+    const world = engine.world;
+    world.gravity.y = 0;
 
-    let latestHandsResults = null;
-    hands.onResults(results => latestHandsResults = results);
+    const canvasWidth = window.innerWidth;
+    const canvasHeight = window.innerHeight;
 
-const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    const render = Render.create({
+      element: document.body,
+      engine: engine,
+      options: {
+        width: canvasWidth,
+        height: canvasHeight,
+        wireframes: false,
+        background: 'transparent'
+      }
+    });
+    
+    const faceCanvas = document.getElementById('faceCanvas');
+const faceCtx = faceCanvas.getContext('2d');
+faceCanvas.width = canvasWidth;
+faceCanvas.height = canvasHeight;
+
+const faceMesh = new FaceMesh({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+});
+
 faceMesh.setOptions({
   maxNumFaces: 1,
   refineLandmarks: true,
   minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5,
+  minTrackingConfidence: 0.5
 });
 
-let latestFaceResults = null;
-faceMesh.onResults(results => {
-  latestFaceResults = results;
-});
-
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({ image: videoElement });
-          await faceMesh.send({ image: videoElement });
-
-      },
-      width: 640,
-      height: 480
-    });
-    camera.start();
-
-    const synths = Array.from({ length: 5 }, () =>
-      new Tone.Oscillator({ frequency: 440, type: 'sine', volume: -Infinity }).toDestination()
-    );
-    synths.forEach(s => s.start());
-
-    function createRope(start, end, numSegments = 50) {
-      let points = [];
-      for (let i = 0; i < numSegments; i++) {
-        let t = i / (numSegments - 1);
-        let x = start.x * (1 - t) + end.x * t;
-        let y = start.y * (1 - t) + end.y * t;
-        points.push({ pos: { x, y }, prev: { x, y } });
-      }
-      return {
-        points,
-        segmentLength: Math.hypot(end.x - start.x, end.y - start.y) / (numSegments - 1),
-        movement: 0
-      };
+faceMesh.onResults((results) => {
+  faceCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+  
+  if (results.multiFaceLandmarks) {
+    for (const landmarks of results.multiFaceLandmarks) {
+      drawConnectors(faceCtx, landmarks, FACEMESH_TESSELATION,
+        { color: '#ffffff88', lineWidth: 5 });
     }
-
-    function updateRope(rope) {
-      let totalMovement = 0;
-      for (let i = 1; i < rope.points.length - 1; i++) {
-        let p = rope.points[i];
-        let vx = (p.pos.x - p.prev.x) * 0.98;
-        let vy = (p.pos.y - p.prev.y) * 0.98;
-        p.prev.x = p.pos.x;
-        p.prev.y = p.pos.y;
-        p.pos.x += vx;
-        p.pos.y += vy;
-        totalMovement += Math.hypot(vx, vy);
-      }
-      rope.movement = totalMovement / (rope.points.length - 2);
-      for (let iter = 0; iter < 5; iter++) {
-        for (let i = 0; i < rope.points.length - 1; i++) {
-          let p1 = rope.points[i], p2 = rope.points[i + 1];
-          let dx = p2.pos.x - p1.pos.x, dy = p2.pos.y - p1.pos.y;
-          let dist = Math.hypot(dx, dy);
-          let diff = (dist - rope.segmentLength) / dist;
-          let offsetX = dx * 0.5 * diff;
-          let offsetY = dy * 0.5 * diff;
-          if (i !== 0) {
-            p1.pos.x += offsetX;
-            p1.pos.y += offsetY;
-          }
-          if (i !== rope.points.length - 1) {
-            p2.pos.x -= offsetX;
-            p2.pos.y -= offsetY;
-          }
-        }
-      }
-    }
-
-    function drawRope(ctx, rope) {
-      ctx.beginPath();
-      ctx.moveTo(rope.points[0].pos.x, rope.points[0].pos.y);
-      for (let i = 1; i < rope.points.length; i++) {
-        ctx.lineTo(rope.points[i].pos.x, rope.points[i].pos.y);
-      }
-      ctx.strokeStyle = getColorFromMovement(rope.movement);
-      ctx.lineWidth = 4;
-      ctx.stroke();
-      ctx.fillStyle = 'white';
-      ctx.beginPath();
-      ctx.arc(rope.points[0].pos.x, rope.points[0].pos.y, 5, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(rope.points[rope.points.length - 1].pos.x, rope.points[rope.points.length - 1].pos.y, 5, 0, 2 * Math.PI);
-      ctx.fill();
-    }
-
-    function getColorFromMovement(m) {
-      const clamped = Math.min(1, m / 5);
-      const hue = 240 - 240 * clamped;
-      return `hsl(${hue}, 100%, 50%)`;
-    }
-
-    function updateSound(index, rope) {
-      const volume = Tone.gainToDb(Math.min(1, rope.movement / 10));
-      const freq = Math.min(1000, 200 + (1000 / (rope.segmentLength + 1)));
-      synths[index].volume.rampTo(volume, 0.05);
-      synths[index].frequency.rampTo(freq, 0.1);
-    }
-
-    const fingerIndices = [4, 8, 12, 16, 20];
-    let ropes = fingerIndices.map(() =>
-      createRope({ x: -50, y: canvasElement.height / 2 }, { x: canvasElement.width + 50, y: canvasElement.height / 2 })
-    );
-
-    let idleTime = 0;
-
-    function getIdleWiggle(t, baseX, baseY, amplitude = 300, freq = 0.0001) {
-      const angle = t * freq + Math.random() * Math.PI * 2;
-      const radius = amplitude * (0.5 + Math.random());
-      return {
-        x: baseX + Math.cos(angle) * radius,
-        y: baseY + Math.sin(angle) * radius
-      };
-    }
-
-    function draw() {
-      ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-
-      let leftHand = null, rightHand = null;
-      if (latestHandsResults?.multiHandLandmarks && latestHandsResults.multiHandedness) {
-        latestHandsResults.multiHandedness.forEach((hand, i) => {
-          if (hand.label === "Left") leftHand = latestHandsResults.multiHandLandmarks[i];
-          else if (hand.label === "Right") rightHand = latestHandsResults.multiHandLandmarks[i];
-        });
-      }
-      if (latestFaceResults?.multiFaceLandmarks) {
-  for (const landmarks of latestFaceResults.multiFaceLandmarks) {
-    drawConnectors(ctx, landmarks, FACEMESH_TESSELATION, { color: 'black', lineWidth: 6 });
-    // drawConnectors(ctx, landmarks, FACEMESH_RIGHT_EYE, { color: '#FF0000' });
-    // drawConnectors(ctx, landmarks, FACEMESH_LEFT_EYE, { color: '#0000FF' });
-    // drawConnectors(ctx, landmarks, FACEMESH_FACE_OVAL, { color: '#FFFFFF' });
   }
-}
+});
 
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
 
-      idleTime++;
+    // Setup Camera
+    const camera = document.getElementById('camera');
+    let attractor = { x: canvasWidth/2, y: canvasHeight/2 };
+    let attractMode = true;
 
-      ropes.forEach((rope, i) => {
-        let leftTip = leftHand ? leftHand[fingerIndices[i]] : null;
-        let rightTip = rightHand ? rightHand[fingerIndices[i]] : null;
-        let start, end;
-        const handsDetected = (leftHand ? 1 : 0) + (rightHand ? 1 : 0);
+    // MediaPipe Hands Setup
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
 
-        if (handsDetected < 2) {
-          let baseY = Math.random() * canvasElement.height;
-          start = leftTip
-            ? { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height }
-            : getIdleWiggle(idleTime + i * 100, -200, baseY);
-          end = rightTip
-            ? { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height }
-            : getIdleWiggle(idleTime + i * 200, canvasElement.width + 200, baseY);
-        } else {
-          start = { x: leftTip.x * canvasElement.width, y: leftTip.y * canvasElement.height };
-          end = { x: rightTip.x * canvasElement.width, y: rightTip.y * canvasElement.height };
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks) {
+        const landmarks = results.multiHandLandmarks[0];
+        if (landmarks && landmarks[9]) {
+          // Update attractor position ke landmark 9 (middle finger MCP)
+          const landmark = landmarks[9];
+          attractor.x = landmark.x * canvasWidth;
+          attractor.y = landmark.y * canvasHeight;
+
+          // Check jarak antara tip (landmark 12) dan MCP (landmark 9) untuk menentukan mode
+          const tip = landmarks[12];
+          const distance = Math.hypot(
+            tip.x - landmark.x,
+            tip.y - landmark.y
+          );
+          
+          attractMode = distance < 0.05; // Threshold untuk buka/tutup tangan
+          modeIndicator.innerText = attractMode ? "Mode: Attract" : "Mode: Repulse";
         }
+      }
+    });
 
-        if (leftTip) rope.points[0].pos = { ...start };
-        else rope.points[0] = { pos: { ...start }, prev: { ...start } };
+    const cameraSetup = new Camera(camera, {
+onFrame: async () => {
+  await hands.send({ image: camera });
+  await faceMesh.send({ image: camera });
+},
 
-        if (rightTip) rope.points[rope.points.length - 1].pos = { ...end };
-        else rope.points[rope.points.length - 1] = { pos: { ...end }, prev: { ...end } };
+      width: canvasWidth,
+      height: canvasHeight
+    });
+    cameraSetup.start();
 
-        rope.segmentLength = Math.hypot(end.x - start.x, end.y - start.y) / (rope.points.length - 1);
+    // Walls
+    const walls = [
+      Bodies.rectangle(canvasWidth/2, -50, canvasWidth, 100, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(canvasWidth/2, canvasHeight+50, canvasWidth, 100, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(-50, canvasHeight/2, 100, canvasHeight, { isStatic: true, label: 'wall' }),
+      Bodies.rectangle(canvasWidth+50, canvasHeight/2, 100, canvasHeight, { isStatic: true, label: 'wall' })
+    ];
+    World.add(world, walls);
 
-        updateRope(rope);
-        drawRope(ctx, rope);
-        updateSound(i, rope);
+    // Balls
+    const balls = [];
+    for (let i = 0; i < 30; i++) {
+      let ball = Bodies.circle(
+        Math.random() * (canvasWidth - 100) + 50,
+        Math.random() * (canvasHeight - 100) + 50,
+        Math.random() * 10 + 10,
+        {
+          restitution: 0.9,
+          friction: 0.005,
+          frictionAir: 0.05,
+          label: 'ball',
+          render: { fillStyle: '#' + Math.floor(Math.random()*16777215).toString(16) }
+        }
+      );
+      balls.push(ball);
+    }
+    World.add(world, balls);
+
+    // Sound Control
+    const synth = new Tone.Synth().toDestination();
+    
+   // Baru: tap anywhere (mouse/touch) untuk on/off suara
+let soundEnabled = false;
+document.body.addEventListener('click', async () => {
+  soundEnabled = !soundEnabled;
+  // opsional: visual feedback
+  console.log('Sound', soundEnabled ? 'ENABLED' : 'DISABLED');
+  if (soundEnabled) await Tone.start();
+});
+
+
+    // Physics Updates
+    Events.on(engine, 'beforeUpdate', () => {
+      balls.forEach(ball => {
+        const dir = Vector.sub(attractor, ball.position);
+        const distance = Vector.magnitude(dir);
+        
+        if (distance > 1) {
+          const force = Vector.mult(Vector.normalise(dir), 
+            (attractMode ? 0.00002 : -0.00002) * distance
+          );
+          Body.applyForce(ball, ball.position, force);
+        }
       });
-
-      requestAnimationFrame(draw);
-    }
-
-    document.body.addEventListener('click', async () => {
-      await Tone.start();
-      console.log('🔊 Audio started');
     });
 
-    draw();
-    videoElement.addEventListener('loadedmetadata', () => {
-  resizeToVideo();
-});
+    // Ubah pemicu suara: hanya aktif jika soundEnabled dan mode repulse
+    Events.on(engine, 'collisionStart', (event) => {
+      event.pairs.forEach(pair => {
+        if (soundEnabled && !attractMode && ['wall', 'ball'].includes(pair.bodyA.label)) {
+          synth.triggerAttackRelease("C4", "8n");
+        }
+      });
+    });
 
-function resizeToVideo() {
-  const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
+    // Custom Rendering
+    Events.on(render, 'afterRender', () => {
+      const ctx = render.context;
+      
+      // Draw connection lines
+      ctx.beginPath();
+      balls.forEach((a, i) => {
+        balls.slice(i+1).forEach(b => {
+          if (Vector.magnitude(Vector.sub(a.position, b.position)) < 100) {
+            ctx.moveTo(a.position.x, a.position.y);
+            ctx.lineTo(b.position.x, b.position.y);
+          }
+        });
+      });
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.stroke();
 
-  // Ambil ukuran layar
-  const screenWidth = window.innerWidth;
-  const screenHeight = window.innerHeight;
-
-  // Hitung ukuran ideal agar tidak stretching
-  let width = screenWidth;
-  let height = width / aspectRatio;
-
-  if (height > screenHeight) {
-    height = screenHeight;
-    width = height * aspectRatio;
-  }
-
-  // Apply ke elemen
-  videoElement.style.width = width + 'px';
-  videoElement.style.height = height + 'px';
-  canvasElement.style.width = width + 'px';
-  canvasElement.style.height = height + 'px';
-
-  // Juga sesuaikan ukuran internal canvas (agar gambar jelas)
-  canvasElement.width = videoElement.videoWidth;
-  canvasElement.height = videoElement.videoHeight;
-}
-
+      // Draw attractor
+      ctx.beginPath();
+      ctx.arc(attractor.x, attractor.y, 15, 0, Math.PI*2);
+      ctx.fillStyle = attractMode ? '#00ff0088' : '#ff000088';
+      ctx.fill();
+    });
   </script>
 </body>
 </html>

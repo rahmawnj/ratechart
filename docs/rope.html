@@ -91,10 +91,7 @@ faceMesh.onResults(results => {
     });
     camera.start();
 
-    const synths = Array.from({ length: 5 }, () =>
-      new Tone.Oscillator({ frequency: 440, type: 'sine', volume: -Infinity }).toDestination()
-    );
-    synths.forEach(s => s.start());
+
 
     function createRope(start, end, numSegments = 20) {
       let points = [];
@@ -147,6 +144,16 @@ faceMesh.onResults(results => {
 const reverb = new Tone.Reverb({ decay: 3, wet: 0.4 }).toDestination();
 const chorus = new Tone.Chorus(4, 2.5, 0.5).connect(reverb);
 const filter = new Tone.Filter(800, "lowpass").connect(chorus);
+
+
+const synths = Array.from({ length: 5 }, (_, i) =>
+  new Tone.Oscillator({
+    frequency: 440 + i * 15, // kasih variasi frekuensi sedikit
+    type: 'triangle',        // lebih lembut dari sine kalau barengan
+    volume: -20              // volume lebih rendah dari -Infinity
+  }).toDestination()
+);
+synths.forEach(s => s.start());
 
 // 2. PolySynth dengan envelope
 const poly = new Tone.PolySynth(Tone.Synth, {
@@ -220,8 +227,6 @@ function updateSound(index, rope) {
   const cutoff = 500 + mNorm * 2500;  // 500Hz → 3000Hz
   filter.frequency.rampTo(cutoff, 0.1);
 }
-
-
 
     const fingerIndices = [4, 8, 12, 16, 20];
     let ropes = fingerIndices.map(() =>
